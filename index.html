@@ -1,924 +1,205 @@
-```react
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { initializeApp } from 'firebase/app';
-import { 
-  getFirestore, collection, doc, onSnapshot, setDoc, deleteDoc, query 
-} from 'firebase/firestore';
-import { 
-  getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged 
-} from 'firebase/auth';
-import {
-  Home, CalendarPlus, CalendarDays, ListChecks, Settings2,
-  ChevronLeft, ChevronRight, Trash2, BedDouble, Users, Umbrella,
-  X, Check, Loader2, Plus, Minus, AlertTriangle, RefreshCw
-} from 'lucide-react';
+<!DOCTYPE html>
+<html lang="si">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Green Stay Negombo - Room Booking</title>
+  
+  <!-- Tailwind CSS & FontAwesome Icons -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  
+  <!-- React & Babel -->
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-// --- Firebase Configuration & Setup ---
-const firebaseConfig = typeof __firebase_config !== 'undefined' 
-  ? JSON.parse(__firebase_config) 
-  : {
-      apiKey: "demo-api-key",
-      authDomain: "demo-app.firebaseapp.com",
-      projectId: "demo-app",
-      storageBucket: "demo-app.appspot.com",
-      messagingSenderId: "123456789",
-      appId: "1:123456789:web:123456"
-    };
+  <!-- Google Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Sinhala:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', 'Noto Sans Sinhala', sans-serif; }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-800 pb-20">
+  <div id="root"></div>
 
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'room-booking-app-v2';
+  <script type="text/babel">
+    const { useState, useEffect } = React;
 
-const TYPE_ORDER = ['double', 'cabana', 'triple', 'family'];
+    function App() {
+      const [tab, setTab] = useState('dashboard');
+      const [bookings, setBookings] = useState(() => {
+        const saved = localStorage.getItem('gs_bookings');
+        return saved ? JSON.parse(saved) : [
+          { id: 1, guest: "සමන් කුමාර", phone: "0771234567", roomType: "Double", type: "Day Out", date: new Date().toISOString().split('T')[0] }
+        ];
+      });
 
-const TYPE_META = {
-  double: { label: 'Double Room', icon: BedDouble, bg: 'bg-teal-800', bgSoft: 'bg-teal-50', text: 'text-teal-800', border: 'border-teal-200', ring: 'ring-teal-700' },
-  cabana: { label: 'Cabana', icon: Umbrella, bg: 'bg-amber-700', bgSoft: 'bg-amber-50', text: 'text-amber-800', border: 'border-amber-200', ring: 'ring-amber-600' },
-  triple: { label: 'Triple Room', icon: Users, bg: 'bg-stone-700', bgSoft: 'bg-stone-100', text: 'text-stone-800', border: 'border-stone-300', ring: 'ring-stone-600' },
-  family: { label: 'Family Room', icon: Home, bg: 'bg-rose-800', bgSoft: 'bg-rose-50', text: 'text-rose-800', border: 'border-rose-200', ring: 'ring-rose-700' },
-};
+      const [formData, setFormData] = useState({
+        guest: '', phone: '', roomType: 'Double', type: 'Day Out', date: new Date().toISOString().split('T')[0]
+      });
 
-const BOOKING_TYPES = {
-  dayout: { label: 'Day out', short: 'Day', time: '10.00 AM - 5.00 PM', badge: 'bg-sky-100 text-sky-700' },
-  nightout: { label: 'Night out', short: 'Night', time: '6.30 PM - 8.00 AM', badge: 'bg-indigo-100 text-indigo-700' },
-  standard: { label: 'Standard (රාත්‍රී නවාතැන්)', short: 'Std', time: '2.00 PM - 11.00 AM', badge: 'bg-teal-100 text-teal-700' },
-  custom: { label: 'Custom (ඔබම දිනය/වේලාව)', short: 'Custom', time: 'ඔබ දෙන වේලාව', badge: 'bg-purple-100 text-purple-700' },
-};
+      useEffect(() => {
+        localStorage.setItem('gs_bookings', JSON.stringify(bookings));
+      }, [bookings]);
 
-const DEFAULT_CONFIG = { double: 4, cabana: 5, triple: 2, family: 1 };
+      const handleAddBooking = (e) => {
+        e.preventDefault();
+        if (!formData.guest || !formData.phone) return alert("කරුණාකර සියලු විස්තර ඇතුළත් කරන්න");
+        setBookings([...bookings, { ...formData, id: Date.now() }]);
+        setFormData({ guest: '', phone: '', roomType: 'Double', type: 'Day Out', date: new Date().toISOString().split('T')[0] });
+        setTab('bookings');
+      };
 
-const SI_MONTHS = ['ජනවාරි', 'පෙබරවාරි', 'මාර්තු', 'අප්‍රේල්', 'මැයි', 'ජූනි', 'ජූලි', 'අගෝස්තු', 'සැප්තැම්බර්', 'ඔක්තෝබර්', 'නොවැම්බර්', 'දෙසැම්බර්'];
-const SI_WEEKDAYS = ['ඉරි', 'සඳු', 'අඟ', 'බදා', 'බ්‍රහ', 'සිකු', 'සෙන'];
+      const deleteBooking = (id) => {
+        if (confirm("මෙම Booking එක ඉවත් කිරීමට අවශ්‍යද?")) {
+          setBookings(bookings.filter(b => b.id !== id));
+        }
+      };
 
-function pad2(n) { return String(n).padStart(2, '0'); }
-
-function todayISO() {
-  const d = new Date();
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-}
-
-function addDaysISO(iso, days) {
-  const [y, m, d] = iso.split('-').map(Number);
-  const dt = new Date(y, m - 1, d);
-  dt.setDate(dt.getDate() + days);
-  return `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`;
-}
-
-function formatSiDate(iso) {
-  if (!iso) return '';
-  const [y, m, d] = iso.split('-').map(Number);
-  return `${d} ${SI_MONTHS[m - 1]} ${y}`;
-}
-
-function formatTime12(hh, mm) {
-  const period = hh >= 12 ? 'PM' : 'AM';
-  let h12 = hh % 12;
-  if (h12 === 0) h12 = 12;
-  return `${h12}.${pad2(mm)} ${period}`;
-}
-
-function timeOnly(dtStr) {
-  if (!dtStr) return '';
-  const timePart = dtStr.split('T')[1];
-  const [hh, mm] = timePart.split(':').map(Number);
-  return formatTime12(hh, mm);
-}
-
-function formatSiDateTime(dtStr) {
-  if (!dtStr) return '';
-  const [datePart, timePart] = dtStr.split('T');
-  const [hh, mm] = timePart.split(':').map(Number);
-  return `${formatSiDate(datePart)}, ${formatTime12(hh, mm)}`;
-}
-
-function daysInMonth(year, monthIndex0) {
-  return new Date(year, monthIndex0 + 1, 0).getDate();
-}
-
-function rangesOverlap(aStart, aEnd, bStart, bEnd) {
-  return aStart < bEnd && bStart < aEnd;
-}
-
-function bookingTouchesDate(booking, dateStr) {
-  const dayStart = `${dateStr}T00:00`;
-  const dayEnd = `${addDaysISO(dateStr, 1)}T00:00`;
-  return rangesOverlap(dayStart, dayEnd, booking.checkIn, booking.checkOut);
-}
-
-function daySlotWindow(dateStr) { return [`${dateStr}T10:00`, `${dateStr}T17:00`]; }
-function nightSlotWindow(dateStr) { return [`${dateStr}T18:30`, `${addDaysISO(dateStr, 1)}T08:00`]; }
-
-function daysBetweenISO(a, b) {
-  const [ay, am, ad] = a.split('-').map(Number);
-  const [by, bm, bd] = b.split('-').map(Number);
-  const d1 = new Date(ay, am - 1, ad);
-  const d2 = new Date(by, bm - 1, bd);
-  return Math.round((d2 - d1) / 86400000);
-}
-
-function getRoomsForType(type, config) {
-  const count = config[type] || 0;
-  const rooms = [];
-  for (let i = 1; i <= count; i++) {
-    rooms.push({ id: `${type}-${i}`, type, number: i, label: `${TYPE_META[type].label} ${i}` });
-  }
-  return rooms;
-}
-
-function getAllRooms(config) {
-  return TYPE_ORDER.flatMap(t => getRoomsForType(t, config));
-}
-
-function genId() {
-  return 'bk_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-}
-
-function FontLoader() {
-  useEffect(() => {
-    const id = 'room-booking-fonts-link';
-    if (document.getElementById(id)) return;
-    const link = document.createElement('link');
-    link.id = id;
-    link.rel = 'stylesheet';
-    link.href = 'https://fonts.googleapis.com/css2?family=Manrope:wght@600;700;800&family=Inter:wght@400;500;600&family=Noto+Sans+Sinhala:wght@400;600;700&display=swap';
-    document.head.appendChild(link);
-  }, []);
-  return null;
-}
-
-function Header({ saving }) {
-  return (
-    <header className="bg-teal-900 text-white px-4 py-4 sticky top-0 z-20 shadow-sm">
-      <div className="max-w-2xl mx-auto flex items-center justify-between">
-        <div>
-          <h1 className="text-lg font-bold tracking-tight" style={{ fontFamily: "'Manrope',sans-serif" }}>Room Booking</h1>
-          <p className="text-teal-300 text-xs">කාමර වෙන්කිරීම් කළමනාකරු (Live Sync)</p>
-        </div>
-        <div className="text-teal-300 text-xs flex items-center gap-1.5 h-4">
-          {saving ? (
-            <>
-              <RefreshCw className="animate-spin" size={12} />
-              <span>සූදානම් වෙමින්...</span>
-            </>
-          ) : (
-            <span className="bg-teal-800 text-teal-200 text-[10px] px-2 py-0.5 rounded-full font-medium">Online</span>
-          )}
-        </div>
-      </div>
-    </header>
-  );
-}
-
-function Toast({ toast }) {
-  return (
-    <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-30">
-      <div className={`px-4 py-2 rounded-full text-sm text-white shadow-lg ${toast.kind === 'error' ? 'bg-rose-600' : 'bg-teal-800'}`}>
-        {toast.text}
-      </div>
-    </div>
-  );
-}
-
-function BottomNav({ active, onChange }) {
-  const items = [
-    { key: 'dashboard', icon: Home, label: 'මුල් පිටුව' },
-    { key: 'add', icon: CalendarPlus, label: 'එකතු කරන්න' },
-    { key: 'calendar', icon: CalendarDays, label: 'Calendar' },
-    { key: 'bookings', icon: ListChecks, label: 'Booking' },
-    { key: 'settings', icon: Settings2, label: 'සැකසුම්' },
-  ];
-  return (
-    <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-stone-200 z-20">
-      <div className="max-w-2xl mx-auto grid grid-cols-5">
-        {items.map(item => {
-          const Icon = item.icon;
-          const isActive = active === item.key;
-          return (
-            <button key={item.key} onClick={() => onChange(item.key)} className={`flex flex-col items-center gap-0.5 py-2.5 ${isActive ? 'text-teal-800' : 'text-stone-400'}`}>
-              <Icon size={20} strokeWidth={isActive ? 2.4 : 2} />
-              <span className="text-[10px] font-medium">{item.label}</span>
-            </button>
-          );
-        })}
-      </div>
-    </nav>
-  );
-}
-
-function Dashboard({ config, bookings, onNavigate }) {
-  const today = todayISO();
-  const rooms = useMemo(() => getAllRooms(config), [config]);
-  const totalRooms = rooms.length;
-
-  const [dayStart, dayEnd] = daySlotWindow(today);
-  const [nightStart, nightEnd] = nightSlotWindow(today);
-
-  const dayFree = useMemo(() =>
-    totalRooms - rooms.filter(r => bookings.some(b => b.roomId === r.id && rangesOverlap(dayStart, dayEnd, b.checkIn, b.checkOut))).length,
-    [rooms, bookings, dayStart, dayEnd, totalRooms]
-  );
-  const nightFree = useMemo(() =>
-    totalRooms - rooms.filter(r => bookings.some(b => b.roomId === r.id && rangesOverlap(nightStart, nightEnd, b.checkIn, b.checkOut))).length,
-    [rooms, bookings, nightStart, nightEnd, totalRooms]
-  );
-
-  const arrivalsToday = useMemo(() => bookings.filter(b => b.checkIn.startsWith(today)).sort((a, b) => a.checkIn.localeCompare(b.checkIn)), [bookings, today]);
-  const departuresToday = useMemo(() => bookings.filter(b => b.checkOut.startsWith(today)).sort((a, b) => a.checkOut.localeCompare(b.checkOut)), [bookings, today]);
-
-  const upcoming = useMemo(() =>
-    bookings.filter(b => b.checkOut > `${today}T00:00`).sort((a, b) => a.checkIn.localeCompare(b.checkIn)).slice(0, 5),
-    [bookings, today]
-  );
-
-  return (
-    <div className="pt-4 space-y-5">
-      <div className="grid grid-cols-2 gap-3">
-        <div className="bg-white rounded-2xl border border-stone-200 p-4">
-          <p className="text-xs text-stone-500">අද Day out හිස්</p>
-          <p className="text-2xl font-bold text-sky-700" style={{ fontFamily: "'Manrope',sans-serif" }}>
-            {dayFree}<span className="text-sm text-stone-400 font-medium"> / {totalRooms}</span>
-          </p>
-        </div>
-        <div className="bg-white rounded-2xl border border-stone-200 p-4">
-          <p className="text-xs text-stone-500">අද Night out හිස්</p>
-          <p className="text-2xl font-bold text-indigo-700" style={{ fontFamily: "'Manrope',sans-serif" }}>
-            {nightFree}<span className="text-sm text-stone-400 font-medium"> / {totalRooms}</span>
-          </p>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        {TYPE_ORDER.map(type => {
-          const meta = TYPE_META[type];
-          const Icon = meta.icon;
-          const total = config[type] || 0;
-          const typeRooms = rooms.filter(r => r.type === type);
-          const dFree = typeRooms.filter(r => !bookings.some(b => b.roomId === r.id && rangesOverlap(dayStart, dayEnd, b.checkIn, b.checkOut))).length;
-          const nFree = typeRooms.filter(r => !bookings.some(b => b.roomId === r.id && rangesOverlap(nightStart, nightEnd, b.checkIn, b.checkOut))).length;
-          return (
-            <div key={type} className={`rounded-2xl border ${meta.border} ${meta.bgSoft} p-3`}>
-              <div className="flex items-center gap-2 mb-1">
-                <Icon className={meta.text} size={18} />
-                <p className={`text-xs font-medium ${meta.text}`}>{meta.label}</p>
-              </div>
-              <p className="text-xs text-stone-600">Day {dFree}/{total} · Night {nFree}/{total}</p>
+      return (
+        <div class="max-w-md mx-auto bg-white min-h-screen shadow-xl relative pb-16">
+          {/* Header */}
+          <header class="bg-emerald-700 text-white p-4 sticky top-0 z-10 flex justify-between items-center shadow-md">
+            <div>
+              <h1 class="text-lg font-bold">Green Stay Negombo</h1>
+              <p class="text-xs text-emerald-100">කාමර වෙන්කිරීම් කළමනාකරු</p>
             </div>
-          );
-        })}
-      </div>
+            <span class="bg-emerald-800 text-emerald-200 text-xs px-2.5 py-1 rounded-full border border-emerald-600 flex items-center gap-1">
+              <span class="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span> Live
+            </span>
+          </header>
 
-      {(arrivalsToday.length > 0 || departuresToday.length > 0) && (
-        <div className="bg-white rounded-2xl border border-stone-200 p-4 space-y-2">
-          <p className="text-sm font-semibold text-stone-700">අද</p>
-          {arrivalsToday.map(b => (
-            <div key={b.id} className="flex items-center justify-between text-sm">
-              <span className="text-stone-600">{b.guestName} · {b.roomLabel}</span>
-              <span className="text-emerald-700 text-xs font-medium">{BOOKING_TYPES[b.bookingType]?.short || 'Std'} check-in · {timeOnly(b.checkIn)}</span>
-            </div>
-          ))}
-          {departuresToday.map(b => (
-            <div key={b.id} className="flex items-center justify-between text-sm">
-              <span className="text-stone-600">{b.guestName} · {b.roomLabel}</span>
-              <span className="text-rose-700 text-xs font-medium">Check-out · {timeOnly(b.checkOut)}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div className="bg-white rounded-2xl border border-stone-200 p-4">
-        <div className="flex items-center justify-between mb-3">
-          <p className="text-sm font-semibold text-stone-700">එන Booking</p>
-          <button onClick={() => onNavigate('bookings')} className="text-xs text-teal-700 font-medium">සියල්ල →</button>
-        </div>
-        {upcoming.length === 0 ? (
-          <p className="text-sm text-stone-400">Booking නෑ</p>
-        ) : (
-          <div className="space-y-2">
-            {upcoming.map(b => (
-              <div key={b.id} className="text-sm border-b border-stone-100 last:border-0 pb-2 last:pb-0">
-                <div className="flex items-center gap-2">
-                  <p className="text-stone-700 font-medium">{b.guestName}</p>
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${BOOKING_TYPES[b.bookingType]?.badge}`}>{BOOKING_TYPES[b.bookingType]?.short}</span>
+          {/* Content Body */}
+          <main class="p-4">
+            {tab === 'dashboard' && (
+              <div class="space-y-4">
+                <div class="grid grid-cols-2 gap-3">
+                  <div class="bg-teal-50 border border-teal-200 p-4 rounded-xl text-center">
+                    <i class="fa-solid fa-sun text-teal-600 text-xl mb-1"></i>
+                    <span class="text-xs text-teal-700 font-bold block">අද Day Out</span>
+                    <span class="text-2xl font-black text-teal-900">
+                      {bookings.filter(b => b.type === 'Day Out').length} / 4
+                    </span>
+                  </div>
+                  <div class="bg-indigo-50 border border-indigo-200 p-4 rounded-xl text-center">
+                    <i class="fa-solid fa-moon text-indigo-600 text-xl mb-1"></i>
+                    <span class="text-xs text-indigo-700 font-bold block">අද Night Out</span>
+                    <span class="text-2xl font-black text-indigo-900">
+                      {bookings.filter(b => b.type === 'Night Out').length} / 4
+                    </span>
+                  </div>
                 </div>
-                <p className="text-stone-400 text-xs">{b.roomLabel} · {formatSiDateTime(b.checkIn)} → {formatSiDateTime(b.checkOut)}</p>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
 
-      <button onClick={() => onNavigate('add')} className="w-full bg-teal-800 text-white rounded-2xl py-3.5 font-semibold flex items-center justify-center gap-2 active:bg-teal-900">
-        <CalendarPlus size={18} /> අලුත් Booking එකතු කරන්න
-      </button>
-    </div>
-  );
-}
-
-function AddBooking({ config, bookings, onAdd, showToast, onDone }) {
-  const today = todayISO();
-  const [bookingType, setBookingType] = useState('standard');
-  const [singleDate, setSingleDate] = useState(today);
-  const [checkInDate, setCheckInDate] = useState(today);
-  const [checkOutDate, setCheckOutDate] = useState(addDaysISO(today, 1));
-  const [customCheckInDate, setCustomCheckInDate] = useState(today);
-  const [customCheckInTime, setCustomCheckInTime] = useState('14:00');
-  const [customCheckOutDate, setCustomCheckOutDate] = useState(addDaysISO(today, 1));
-  const [customCheckOutTime, setCustomCheckOutTime] = useState('11:00');
-  const [type, setType] = useState('double');
-  const [selectedRoomId, setSelectedRoomId] = useState('');
-  const [guestName, setGuestName] = useState('');
-  const [phone, setPhone] = useState('');
-  const [notes, setNotes] = useState('');
-  const [error, setError] = useState('');
-
-  const { checkIn, checkOut, validRange, nights } = useMemo(() => {
-    if (bookingType === 'dayout') {
-      return { checkIn: `${singleDate}T10:00`, checkOut: `${singleDate}T17:00`, validRange: true, nights: 0 };
-    }
-    if (bookingType === 'nightout') {
-      return { checkIn: `${singleDate}T18:30`, checkOut: `${addDaysISO(singleDate, 1)}T08:00`, validRange: true, nights: 1 };
-    }
-    if (bookingType === 'custom') {
-      const ci = `${customCheckInDate}T${customCheckInTime}`;
-      const co = `${customCheckOutDate}T${customCheckOutTime}`;
-      return { checkIn: ci, checkOut: co, validRange: ci < co, nights: null };
-    }
-    const valid = checkInDate < checkOutDate;
-    return { checkIn: `${checkInDate}T14:00`, checkOut: `${checkOutDate}T11:00`, validRange: valid, nights: valid ? daysBetweenISO(checkInDate, checkOutDate) : 0 };
-  }, [bookingType, singleDate, checkInDate, checkOutDate, customCheckInDate, customCheckInTime, customCheckOutDate, customCheckOutTime]);
-
-  const availabilityByType = useMemo(() => {
-    const result = {};
-    TYPE_ORDER.forEach(t => {
-      const rooms = getRoomsForType(t, config);
-      const free = validRange
-        ? rooms.filter(r => !bookings.some(b => b.roomId === r.id && rangesOverlap(checkIn, checkOut, b.checkIn, b.checkOut)))
-        : [];
-      result[t] = { free, total: rooms.length };
-    });
-    return result;
-  }, [config, bookings, checkIn, checkOut, validRange]);
-
-  const availableRooms = availabilityByType[type] ? availabilityByType[type].free : [];
-
-  useEffect(() => {
-    if (availableRooms.length > 0) {
-      if (!availableRooms.some(r => r.id === selectedRoomId)) setSelectedRoomId(availableRooms[0].id);
-    } else {
-      setSelectedRoomId('');
-    }
-  }, [type, checkIn, checkOut, config, bookings]);
-
-  const handleSubmit = () => {
-    setError('');
-    if (!validRange) { setError('Check-out එක check-in එකට වඩා පස්සේ විය යුතුයි'); return; }
-    if (!selectedRoomId) { setError('මේ වේලාවට කාමරයක් හිස් නෑ'); return; }
-    if (!guestName.trim()) { setError('Guest නම ඇතුළත් කරන්න'); return; }
-
-    const room = getRoomsForType(type, config).find(r => r.id === selectedRoomId);
-    const booking = {
-      id: genId(),
-      roomId: room.id,
-      roomType: type,
-      roomNumber: room.number,
-      roomLabel: room.label,
-      bookingType,
-      guestName: guestName.trim(),
-      phone: phone.trim(),
-      checkIn,
-      checkOut,
-      notes: notes.trim(),
-      createdAt: Date.now(),
-    };
-    onAdd(booking);
-    showToast(`${booking.roomLabel} - ${booking.guestName} වෙන් කළා`);
-    setGuestName(''); setPhone(''); setNotes('');
-    onDone();
-  };
-
-  return (
-    <div className="pt-4 space-y-5 pb-4">
-      <div>
-        <label className="text-xs font-medium text-stone-500 mb-2 block">Booking වර්ගය</label>
-        <div className="space-y-2">
-          {Object.entries(BOOKING_TYPES).map(([key, meta]) => (
-            <button
-              key={key}
-              onClick={() => setBookingType(key)}
-              className={`w-full text-left rounded-xl border p-3 flex items-center justify-between ${bookingType === key ? 'border-teal-700 bg-teal-50 ring-2 ring-teal-700' : 'border-stone-200 bg-white'}`}
-            >
-              <span className="text-sm font-medium text-stone-700">{meta.label}</span>
-              <span className="text-xs text-stone-500">{meta.time}</span>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {bookingType === 'standard' ? (
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="text-xs font-medium text-stone-500 mb-1 block">Check-in දිනය</label>
-            <input type="date" value={checkInDate} onChange={e => setCheckInDate(e.target.value)} className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm text-stone-700" />
-          </div>
-          <div>
-            <label className="text-xs font-medium text-stone-500 mb-1 block">Check-out දිනය</label>
-            <input type="date" value={checkOutDate} min={addDaysISO(checkInDate, 1)} onChange={e => setCheckOutDate(e.target.value)} className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm text-stone-700" />
-          </div>
-          {validRange && <p className="col-span-2 text-xs text-stone-400">{nights} රාත්‍රී · {formatSiDateTime(checkIn)} → {formatSiDateTime(checkOut)}</p>}
-        </div>
-      ) : bookingType === 'custom' ? (
-        <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-medium text-stone-500 mb-1 block">Check-in දිනය</label>
-              <input type="date" value={customCheckInDate} onChange={e => setCustomCheckInDate(e.target.value)} className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm text-stone-700" />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-stone-500 mb-1 block">Check-in වේලාව</label>
-              <input type="time" value={customCheckInTime} onChange={e => setCustomCheckInTime(e.target.value)} className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm text-stone-700" />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-medium text-stone-500 mb-1 block">Check-out දිනය</label>
-              <input type="date" value={customCheckOutDate} onChange={e => setCustomCheckOutDate(e.target.value)} className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm text-stone-700" />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-stone-500 mb-1 block">Check-out වේලාව</label>
-              <input type="time" value={customCheckOutTime} onChange={e => setCustomCheckOutTime(e.target.value)} className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm text-stone-700" />
-            </div>
-          </div>
-          {validRange ? (
-            <p className="text-xs text-stone-400">{formatSiDateTime(checkIn)} → {formatSiDateTime(checkOut)}</p>
-          ) : (
-            <p className="text-xs text-rose-500">Check-out එක check-in එකට වඩා පස්සේ විය යුතුයි</p>
-          )}
-        </div>
-      ) : (
-        <div>
-          <label className="text-xs font-medium text-stone-500 mb-1 block">{bookingType === 'nightout' ? 'රාත්‍රියේ දිනය' : 'දිනය'}</label>
-          <input type="date" value={singleDate} onChange={e => setSingleDate(e.target.value)} className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm text-stone-700" />
-          <p className="text-xs text-stone-400 mt-1">{formatSiDateTime(checkIn)} → {formatSiDateTime(checkOut)}</p>
-        </div>
-      )}
-
-      <div>
-        <label className="text-xs font-medium text-stone-500 mb-2 block">කාමර වර්ගය</label>
-        <div className="grid grid-cols-2 gap-2">
-          {TYPE_ORDER.map(t => {
-            const meta = TYPE_META[t];
-            const Icon = meta.icon;
-            const avail = availabilityByType[t];
-            const isActive = type === t;
-            return (
-              <button
-                key={t}
-                onClick={() => setType(t)}
-                className={`rounded-xl border p-3 text-left transition ${isActive ? `${meta.border} ${meta.bgSoft} ring-2 ${meta.ring}` : 'border-stone-200 bg-white'}`}
-              >
-                <Icon className={meta.text} size={18} />
-                <p className="text-sm font-medium text-stone-700 mt-1">{meta.label}</p>
-                <p className={`text-xs mt-0.5 ${avail && avail.free.length > 0 ? 'text-emerald-600' : 'text-rose-500'}`}>
-                  {avail ? avail.free.length : 0}/{avail ? avail.total : 0} available
-                </p>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {validRange && (
-        <div>
-          <label className="text-xs font-medium text-stone-500 mb-2 block">කාමර අංකය</label>
-          {availableRooms.length === 0 ? (
-            <p className="text-sm text-rose-600 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2.5">මේ වේලාවට {TYPE_META[type].label} හිස් නෑ</p>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {availableRooms.map(r => (
-                <button
-                  key={r.id}
-                  onClick={() => setSelectedRoomId(r.id)}
-                  className={`px-3 py-2 rounded-xl text-sm border ${selectedRoomId === r.id ? `${TYPE_META[type].bg} text-white border-transparent` : 'border-stone-300 text-stone-600 bg-white'}`}
-                >
-                  {r.label}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      <div>
-        <label className="text-xs font-medium text-stone-500 mb-1 block">Guest නම</label>
-        <input type="text" value={guestName} onChange={e => setGuestName(e.target.value)} placeholder="උදා: Nimal Perera" className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm text-stone-700" />
-      </div>
-
-      <div>
-        <label className="text-xs font-medium text-stone-500 mb-1 block">දුරකථන අංකය (optional)</label>
-        <input type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="07X XXX XXXX" className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm text-stone-700" />
-      </div>
-
-      <div>
-        <label className="text-xs font-medium text-stone-500 mb-1 block">සටහන් (optional)</label>
-        <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm text-stone-700" />
-      </div>
-
-      {error && (
-        <div className="flex items-center gap-2 text-rose-600 text-sm bg-rose-50 border border-rose-200 rounded-xl px-3 py-2">
-          <AlertTriangle size={16} /> {error}
-        </div>
-      )}
-
-      <button onClick={handleSubmit} className="w-full bg-teal-800 text-white rounded-2xl py-3.5 font-semibold active:bg-teal-900">
-        Booking එකතු කරන්න
-      </button>
-    </div>
-  );
-}
-
-function CalendarView({ config, bookings, onDelete }) {
-  const today = todayISO();
-  const now = new Date();
-  const [monthOffset, setMonthOffset] = useState(0);
-  const [selectedDate, setSelectedDate] = useState(today);
-  const [confirmId, setConfirmId] = useState(null);
-
-  const base = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
-  const year = base.getFullYear();
-  const monthIndex = base.getMonth();
-  const numDays = daysInMonth(year, monthIndex);
-  const firstWeekday = new Date(year, monthIndex, 1).getDay();
-
-  const rooms = useMemo(() => getAllRooms(config), [config]);
-  const totalRooms = rooms.length;
-
-  const availabilityFor = useCallback((dateStr) => {
-    const touched = rooms.filter(r => bookings.some(b => b.roomId === r.id && bookingTouchesDate(b, dateStr))).length;
-    return totalRooms - touched;
-  }, [rooms, bookings, totalRooms]);
-
-  const cells = [];
-  for (let i = 0; i < firstWeekday; i++) cells.push(null);
-  for (let d = 1; d <= numDays; d++) cells.push(`${year}-${pad2(monthIndex + 1)}-${pad2(d)}`);
-
-  const [selDayStart, selDayEnd] = daySlotWindow(selectedDate);
-  const [selNightStart, selNightEnd] = nightSlotWindow(selectedDate);
-
-  const selectedBookings = useMemo(() =>
-    bookings.filter(b => bookingTouchesDate(b, selectedDate)).sort((a, b) => a.checkIn.localeCompare(b.checkIn)),
-    [bookings, selectedDate]
-  );
-
-  const ratioColor = (free) => {
-    if (totalRooms === 0) return 'bg-stone-100 text-stone-400';
-    if (free === 0) return 'bg-rose-100 text-rose-700';
-    if (free / totalRooms < 0.34) return 'bg-amber-100 text-amber-700';
-    return 'bg-emerald-100 text-emerald-700';
-  };
-
-  return (
-    <div className="pt-4 pb-4 space-y-4">
-      <div className="flex items-center justify-between">
-        <button onClick={() => setMonthOffset(m => m - 1)} className="p-2 rounded-full bg-white border border-stone-200"><ChevronLeft size={18} className="text-stone-600" /></button>
-        <p className="font-semibold text-stone-800" style={{ fontFamily: "'Manrope',sans-serif" }}>{SI_MONTHS[monthIndex]} {year}</p>
-        <button onClick={() => setMonthOffset(m => m + 1)} className="p-2 rounded-full bg-white border border-stone-200"><ChevronRight size={18} className="text-stone-600" /></button>
-      </div>
-
-      <p className="text-[11px] text-stone-400 -mt-2">අංකය = සම්පූර්ණයෙන් හිස් කාමර ගණන</p>
-
-      <div className="grid grid-cols-7 gap-1.5 text-center">
-        {SI_WEEKDAYS.map(w => <div key={w} className="text-[10px] text-stone-400 font-medium pb-1">{w}</div>)}
-        {cells.map((dateStr, idx) => {
-          if (!dateStr) return <div key={idx} />;
-          const free = availabilityFor(dateStr);
-          const isToday = dateStr === today;
-          const isSelected = dateStr === selectedDate;
-          const dayNum = parseInt(dateStr.split('-')[2], 10);
-          return (
-            <button
-              key={dateStr}
-              onClick={() => setSelectedDate(dateStr)}
-              className={`aspect-square rounded-lg flex flex-col items-center justify-center text-xs ${ratioColor(free)} ${isSelected ? 'ring-2 ring-teal-700' : ''} ${isToday ? 'font-bold' : ''}`}
-            >
-              <span>{dayNum}</span>
-              <span className="text-[9px] opacity-70">{free}</span>
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="flex items-center gap-3 text-[10px] text-stone-500">
-        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-emerald-200" />ගොඩක් හිස්</span>
-        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-amber-200" />ටිකයි</span>
-        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-rose-200" />Full</span>
-      </div>
-
-      <div className="bg-white rounded-2xl border border-stone-200 p-4">
-        <p className="text-sm font-semibold text-stone-700 mb-3">{formatSiDate(selectedDate)}</p>
-        <div className="grid grid-cols-2 gap-2 mb-4">
-          {TYPE_ORDER.map(t => {
-            const meta = TYPE_META[t];
-            const typeRooms = rooms.filter(r => r.type === t);
-            const dFree = typeRooms.filter(r => !bookings.some(b => b.roomId === r.id && rangesOverlap(selDayStart, selDayEnd, b.checkIn, b.checkOut))).length;
-            const nFree = typeRooms.filter(r => !bookings.some(b => b.roomId === r.id && rangesOverlap(selNightStart, selNightEnd, b.checkIn, b.checkOut))).length;
-            return (
-              <div key={t} className="text-xs">
-                <span className={`font-medium ${meta.text}`}>{meta.label}</span>
-                <p className="text-stone-500">Day {dFree}/{typeRooms.length} · Night {nFree}/{typeRooms.length}</p>
-              </div>
-            );
-          })}
-        </div>
-        {selectedBookings.length === 0 ? (
-          <p className="text-sm text-stone-400">මේ දවසේ booking නෑ</p>
-        ) : (
-          <div className="space-y-2">
-            {selectedBookings.map(b => (
-              <div key={b.id} className="flex items-center justify-between text-sm border-t border-stone-100 pt-2 first:border-0 first:pt-0">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <p className="text-stone-700 font-medium">{b.roomLabel}</p>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${BOOKING_TYPES[b.bookingType]?.badge}`}>{BOOKING_TYPES[b.bookingType]?.short}</span>
-                  </div>
-                  <p className="text-stone-400 text-xs">{b.guestName} · {formatSiDateTime(b.checkIn)} → {formatSiDateTime(b.checkOut)}</p>
-                </div>
-                {confirmId === b.id ? (
-                  <div className="flex gap-1 shrink-0">
-                    <button onClick={() => { onDelete(b.id); setConfirmId(null); }} className="p-1.5 bg-rose-600 text-white rounded-lg"><Check size={14} /></button>
-                    <button onClick={() => setConfirmId(null)} className="p-1.5 bg-stone-200 text-stone-600 rounded-lg"><X size={14} /></button>
-                  </div>
-                ) : (
-                  <button onClick={() => setConfirmId(b.id)} className="p-1.5 text-stone-400 shrink-0"><Trash2 size={15} /></button>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function BookingsList({ bookings, onDelete }) {
-  const today = todayISO();
-  const [confirmId, setConfirmId] = useState(null);
-  const [filter, setFilter] = useState('upcoming');
-
-  const sorted = useMemo(() => {
-    const boundary = `${today}T00:00`;
-    let list = [...bookings];
-    if (filter === 'upcoming') list = list.filter(b => b.checkOut >= boundary);
-    if (filter === 'past') list = list.filter(b => b.checkOut < boundary);
-    return list.sort((a, b) => a.checkIn.localeCompare(b.checkIn));
-  }, [bookings, filter, today]);
-
-  return (
-    <div className="pt-4 pb-4 space-y-3">
-      <div className="flex gap-2">
-        {[['upcoming', 'එන'], ['past', 'ගිය'], ['all', 'සියල්ල']].map(([key, label]) => (
-          <button key={key} onClick={() => setFilter(key)} className={`px-3 py-1.5 rounded-full text-xs font-medium ${filter === key ? 'bg-teal-800 text-white' : 'bg-white border border-stone-200 text-stone-600'}`}>{label}</button>
-        ))}
-      </div>
-
-      {sorted.length === 0 ? (
-        <p className="text-sm text-stone-400 text-center py-10">Booking නෑ</p>
-      ) : (
-        <div className="space-y-2">
-          {sorted.map(b => {
-            const meta = TYPE_META[b.roomType] || TYPE_META.double;
-            return (
-              <div key={b.id} className="bg-white rounded-2xl border border-stone-200 p-4">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${meta.bgSoft} ${meta.text}`}>{b.roomLabel}</span>
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${BOOKING_TYPES[b.bookingType]?.badge}`}>{BOOKING_TYPES[b.bookingType]?.short}</span>
-                    </div>
-                    <p className="text-stone-800 font-medium mt-1.5">{b.guestName}</p>
-                    {b.phone && <p className="text-stone-400 text-xs">{b.phone}</p>}
-                    <p className="text-stone-500 text-xs mt-1">{formatSiDateTime(b.checkIn)} → {formatSiDateTime(b.checkOut)}</p>
-                    {b.notes && <p className="text-stone-400 text-xs mt-1 italic">{b.notes}</p>}
-                  </div>
-                  {confirmId === b.id ? (
-                    <div className="flex gap-1 shrink-0">
-                      <button onClick={() => { onDelete(b.id); setConfirmId(null); }} className="p-1.5 bg-rose-600 text-white rounded-lg"><Check size={14} /></button>
-                      <button onClick={() => setConfirmId(null)} className="p-1.5 bg-stone-200 text-stone-600 rounded-lg"><X size={14} /></button>
-                    </div>
+                <div class="bg-emerald-50 border border-emerald-200 p-4 rounded-xl">
+                  <h3 class="font-bold text-emerald-900 mb-2 text-sm flex items-center gap-2">
+                    <i class="fa-solid fa-bell"></i> ඊළඟ Booking සටහන්
+                  </h3>
+                  {bookings.length === 0 ? (
+                    <p class="text-xs text-slate-500">තවම Booking ඇතුළත් කර නැත.</p>
                   ) : (
-                    <button onClick={() => setConfirmId(b.id)} className="p-1.5 text-stone-400 shrink-0"><Trash2 size={15} /></button>
+                    <ul class="space-y-2">
+                      {bookings.slice(0, 3).map(b => (
+                        <li key={b.id} class="bg-white p-2.5 rounded-lg border border-emerald-100 text-xs flex justify-between items-center">
+                          <div>
+                            <p class="font-bold text-slate-800">{b.guest} ({b.roomType})</p>
+                            <p class="text-slate-500">{b.date} • {b.type}</p>
+                          </div>
+                          <span class="text-emerald-700 font-semibold">{b.phone}</span>
+                        </li>
+                      ))}
+                    </ul>
                   )}
                 </div>
               </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
+            )}
 
-function SettingsView({ config, bookings, onUpdate }) {
-  const [local, setLocal] = useState(config);
-  const [saved, setSaved] = useState(false);
+            {tab === 'add' && (
+              <form onSubmit={handleAddBooking} class="space-y-4">
+                <h2 class="text-base font-bold text-slate-800 border-b pb-2">අලුත් Booking එකක් ඇතුළත් කරන්න</h2>
+                <div>
+                  <label class="text-xs font-semibold text-slate-600 block mb-1">පාරිභෝගිකයාගේ නම</label>
+                  <input type="text" required value={formData.guest} onChange={e => setFormData({...formData, guest: e.target.value})} class="w-full border rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-emerald-500 outline-none" placeholder="උදා: නිමාලි පෙරේරා" />
+                </div>
+                <div>
+                  <label class="text-xs font-semibold text-slate-600 block mb-1">දුරකථන අංකය</label>
+                  <input type="tel" required value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} class="w-full border rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-emerald-500 outline-none" placeholder="07XXXXXXXX" />
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                  <div>
+                    <label class="text-xs font-semibold text-slate-600 block mb-1">කාමර වර්ගය</label>
+                    <select value={formData.roomType} onChange={e => setFormData({...formData, roomType: e.target.value})} class="w-full border rounded-lg p-2.5 text-sm">
+                      <option>Double Room</option>
+                      <option>Cabana</option>
+                      <option>Triple Room</option>
+                      <option>Family Room</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="text-xs font-semibold text-slate-600 block mb-1">Package එක</label>
+                    <select value={formData.type} onChange={e => setFormData({...formData, type: e.target.value})} class="w-full border rounded-lg p-2.5 text-sm">
+                      <option>Day Out</option>
+                      <option>Night Out</option>
+                      <option>Full Day</option>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label class="text-xs font-semibold text-slate-600 block mb-1">දිනය</label>
+                  <input type="date" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} class="w-full border rounded-lg p-2.5 text-sm" />
+                </div>
+                <button type="submit" class="w-full bg-emerald-600 text-white font-bold py-3 rounded-xl shadow-md hover:bg-emerald-700 active:scale-95 transition">
+                  Save Booking
+                </button>
+              </form>
+            )}
 
-  useEffect(() => {
-    setLocal(config);
-  }, [config]);
-
-  const maxUsed = useMemo(() => {
-    const map = {};
-    TYPE_ORDER.forEach(t => { map[t] = 0; });
-    bookings.forEach(b => { map[b.roomType] = Math.max(map[b.roomType] || 0, b.roomNumber); });
-    return map;
-  }, [bookings]);
-
-  const change = (type, delta) => {
-    setLocal(prev => {
-      const next = Math.max(maxUsed[type] || 0, (prev[type] || 0) + delta);
-      return { ...prev, [type]: next };
-    });
-    setSaved(false);
-  };
-
-  const handleSave = () => {
-    onUpdate(local);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  };
-
-  return (
-    <div className="pt-4 pb-4 space-y-4">
-      <p className="text-sm text-stone-500">කාමර ගණන් වෙනස් කරන්න</p>
-      {TYPE_ORDER.map(t => {
-        const meta = TYPE_META[t];
-        const Icon = meta.icon;
-        return (
-          <div key={t} className="bg-white rounded-2xl border border-stone-200 p-4 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Icon className={meta.text} size={20} />
+            {tab === 'bookings' && (
               <div>
-                <p className="text-sm font-medium text-stone-700">{meta.label}</p>
-                {maxUsed[t] > 0 && <p className="text-[11px] text-stone-400">Room {maxUsed[t]} වෙනකම් booking ඇත</p>}
+                <h2 class="text-base font-bold text-slate-800 border-b pb-2 mb-3">සියලුම Bookings ({bookings.length})</h2>
+                {bookings.length === 0 ? (
+                  <p class="text-xs text-slate-500 text-center py-8">Bookings කිසිවක් නැත.</p>
+                ) : (
+                  <div class="space-y-3">
+                    {bookings.map(b => (
+                      <div key={b.id} class="bg-white border border-slate-200 rounded-xl p-3 shadow-sm flex justify-between items-center">
+                        <div>
+                          <div class="flex items-center gap-2">
+                            <span class="font-bold text-slate-800 text-sm">{b.guest}</span>
+                            <span class="bg-slate-100 text-slate-600 text-[10px] px-2 py-0.5 rounded-full">{b.roomType}</span>
+                          </div>
+                          <p class="text-xs text-slate-500 mt-0.5"><i class="fa-solid fa-phone text-[10px]"></i> {b.phone}</p>
+                          <p class="text-xs text-emerald-700 font-medium mt-1"><i class="fa-regular fa-calendar"></i> {b.date} ({b.type})</p>
+                        </div>
+                        <button onClick={() => deleteBooking(b.id)} class="text-red-500 p-2 hover:bg-red-50 rounded-lg">
+                          <i class="fa-solid fa-trash-can"></i>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <button onClick={() => change(t, -1)} disabled={local[t] <= (maxUsed[t] || 0)} className="w-8 h-8 rounded-full bg-stone-100 flex items-center justify-center disabled:opacity-30"><Minus size={14} /></button>
-              <span className="w-5 text-center font-semibold text-stone-700">{local[t]}</span>
-              <button onClick={() => change(t, 1)} className="w-8 h-8 rounded-full bg-stone-100 flex items-center justify-center"><Plus size={14} /></button>
-            </div>
-          </div>
-        );
-      })}
-      <button onClick={handleSave} className="w-full bg-teal-800 text-white rounded-2xl py-3.5 font-semibold active:bg-teal-900">
-        {saved ? 'Save කළා ✓' : 'Save කරන්න'}
-      </button>
-    </div>
-  );
-}
+            )}
+          </main>
 
-export default function App() {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [config, setConfig] = useState(DEFAULT_CONFIG);
-  const [bookings, setBookings] = useState([]);
-  const [activeTab, setActiveTab] = useState('dashboard');
-  const [toast, setToast] = useState(null);
-
-  // Authentication Setup
-  useEffect(() => {
-    const initAuth = async () => {
-      try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
-        }
-      } catch (err) {
-        console.error("Auth Failed", err);
-      }
-    };
-    initAuth();
-
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-    });
-
-    return () => unsubscribe();
-  }, []);
-
-  // Real-time Cloud Data Synchronization (Firestore)
-  useEffect(() => {
-    if (!user) return;
-
-    // Public collection path for shared bookings
-    const configDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'app_config', 'config');
-    const bookingsColRef = collection(db, 'artifacts', appId, 'public', 'data', 'bookings');
-
-    // Subscribe to Config changes
-    const unsubConfig = onSnapshot(configDocRef, (docSnap) => {
-      if (docSnap.exists()) {
-        setConfig(docSnap.data());
-      } else {
-        // Initialize config document if it doesn't exist
-        setDoc(configDocRef, DEFAULT_CONFIG);
-      }
-    }, (error) => console.error("Config fetch error:", error));
-
-    // Subscribe to Bookings changes
-    const unsubBookings = onSnapshot(query(bookingsColRef), (querySnap) => {
-      const loadedBookings = [];
-      querySnap.forEach((doc) => {
-        loadedBookings.push({ id: doc.id, ...doc.data() });
-      });
-      setBookings(loadedBookings);
-      setLoading(false);
-    }, (error) => {
-      console.error("Bookings fetch error:", error);
-      setLoading(false);
-    });
-
-    return () => {
-      unsubConfig();
-      unsubBookings();
-    };
-  }, [user]);
-
-  const showToast = useCallback((text, kind = 'success') => {
-    setToast({ text, kind });
-    setTimeout(() => setToast(null), 2500);
-  }, []);
-
-  // Add Booking to Firebase
-  const addBooking = useCallback(async (booking) => {
-    if (!user) return;
-    setSaving(true);
-    try {
-      const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'bookings', booking.id);
-      await setDoc(docRef, booking);
-    } catch (e) {
-      showToast('Save කරගන්න බැරි වුණා', 'error');
-    } finally {
-      setSaving(false);
-    }
-  }, [user, showToast]);
-
-  // Delete Booking from Firebase
-  const deleteBooking = useCallback(async (id) => {
-    if (!user) return;
-    setSaving(true);
-    try {
-      const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'bookings', id);
-      await deleteDoc(docRef);
-      showToast('Booking එක ඉවත් කළා');
-    } catch (e) {
-      showToast('ඉවත් කිරීමට නොහැකි විය', 'error');
-    } finally {
-      setSaving(false);
-    }
-  }, [user, showToast]);
-
-  // Update Room Configuration in Firebase
-  const updateConfig = useCallback(async (nextConfig) => {
-    if (!user) return;
-    setSaving(true);
-    try {
-      const configDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'app_config', 'config');
-      await setDoc(configDocRef, nextConfig);
-      showToast('සැකසුම් යාවත්කාලීන කළා');
-    } catch (e) {
-      showToast('සැකසුම් Save කරගන්න බැරි වුණා', 'error');
-    } finally {
-      setSaving(false);
-    }
-  }, [user, showToast]);
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-stone-50">
-        <div className="flex flex-col items-center gap-3 text-teal-800">
-          <Loader2 className="animate-spin" size={28} />
-          <p className="text-sm text-stone-500">Cloud Data Connect වෙමින් පවතී...</p>
+          {/* Bottom Navigation */}
+          <nav class="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t flex justify-around py-2 shadow-lg z-20">
+            <button onClick={() => setTab('dashboard')} class={`flex flex-col items-center text-xs ${tab === 'dashboard' ? 'text-emerald-700 font-bold' : 'text-slate-400'}`}>
+              <i class="fa-solid fa-chart-pie text-base mb-0.5"></i> මුල් පිටුව
+            </button>
+            <button onClick={() => setTab('add')} class={`flex flex-col items-center text-xs ${tab === 'add' ? 'text-emerald-700 font-bold' : 'text-slate-400'}`}>
+              <i class="fa-solid fa-circle-plus text-lg text-emerald-600 mb-0.5"></i> එකතු කරන්න
+            </button>
+            <button onClick={() => setTab('bookings')} class={`flex flex-col items-center text-xs ${tab === 'bookings' ? 'text-emerald-700 font-bold' : 'text-slate-400'}`}>
+              <i class="fa-solid fa-list-check text-base mb-0.5"></i> ලැයිස්තුව
+            </button>
+          </nav>
         </div>
-      </div>
-    );
-  }
+      );
+    }
 
-  return (
-    <div className="min-h-screen bg-stone-50 flex flex-col" style={{ fontFamily: "'Inter','Noto Sans Sinhala',sans-serif" }}>
-      <FontLoader />
-      <Header saving={saving} />
-      <main className="flex-1 overflow-y-auto pb-24 max-w-2xl w-full mx-auto px-4">
-        {activeTab === 'dashboard' && <Dashboard config={config} bookings={bookings} onNavigate={setActiveTab} />}
-        {activeTab === 'add' && <AddBooking config={config} bookings={bookings} onAdd={addBooking} showToast={showToast} onDone={() => setActiveTab('bookings')} />}
-        {activeTab === 'calendar' && <CalendarView config={config} bookings={bookings} onDelete={deleteBooking} />}
-        {activeTab === 'bookings' && <BookingsList bookings={bookings} onDelete={deleteBooking} />}
-        {activeTab === 'settings' && <SettingsView config={config} bookings={bookings} onUpdate={updateConfig} />}
-      </main>
-      <BottomNav active={activeTab} onChange={setActiveTab} />
-      {toast && <Toast toast={toast} />}
-    </div>
-  );
-}
-```
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
