@@ -1,922 +1,1384 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { initializeApp } from 'firebase/app';
-import { 
-  getFirestore, collection, doc, onSnapshot, setDoc, deleteDoc, query 
-} from 'firebase/firestore';
-import { 
-  getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged 
-} from 'firebase/auth';
-import {
-  Home, CalendarPlus, CalendarDays, ListChecks, Settings2,
-  ChevronLeft, ChevronRight, Trash2, BedDouble, Users, Umbrella,
-  X, Check, Loader2, Plus, Minus, AlertTriangle, RefreshCw
-} from 'lucide-react';
+<!DOCTYPE html>
+<html lang="si">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Green Stay Negombo - Room Booking</title>
 
-// --- Firebase Configuration & Setup ---
-const firebaseConfig = typeof __firebase_config !== 'undefined' 
-  ? JSON.parse(__firebase_config) 
-  : {
-      apiKey: "demo-api-key",
-      authDomain: "demo-app.firebaseapp.com",
-      projectId: "demo-app",
-      storageBucket: "demo-app.appspot.com",
-      messagingSenderId: "123456789",
-      appId: "1:123456789:web:123456"
+  <!-- Tailwind CSS & FontAwesome Icons -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+  <!-- React & Babel -->
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- Google Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Sinhala:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', 'Noto Sans Sinhala', sans-serif; }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-800 pb-20">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useMemo } = React;
+
+    const ADMIN_PIN = 'N1357';
+
+    const DEFAULT_ROOM_CONFIG = {
+      Double: { label: 'Double Room', total: 4, color: 'bg-teal-700', soft: 'bg-teal-50 text-teal-800 border-teal-200' },
+      Cabana: { label: 'Cabana', total: 5, color: 'bg-amber-600', soft: 'bg-amber-50 text-amber-800 border-amber-200' },
+      Triple: { label: 'Triple Room', total: 2, color: 'bg-stone-700', soft: 'bg-stone-100 text-stone-800 border-stone-300' },
+      Family: { label: 'Family Room', total: 1, color: 'bg-rose-700', soft: 'bg-rose-50 text-rose-800 border-rose-200' }
     };
 
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'room-booking-app-v2';
+    const EXTRA_STYLES = [
+      { color: 'bg-cyan-700', soft: 'bg-cyan-50 text-cyan-800 border-cyan-200' },
+      { color: 'bg-indigo-700', soft: 'bg-indigo-50 text-indigo-800 border-indigo-200' },
+      { color: 'bg-emerald-700', soft: 'bg-emerald-50 text-emerald-800 border-emerald-200' },
+      { color: 'bg-purple-700', soft: 'bg-purple-50 text-purple-800 border-purple-200' }
+    ];
 
-const TYPE_ORDER = ['double', 'cabana', 'triple', 'family'];
+    const PACKAGES = [
+      { id: 'Day Out', label: 'Day Out (10:00 AM - 5:00 PM)' },
+      { id: 'Night Out', label: 'Night Out (6:30 PM - 8:00 AM)' },
+      { id: '1 Night Standard', label: '1 Night Standard (2:00 PM - 11:00 AM)' },
+      { id: 'Custom Time', label: 'Custom Time' }
+    ];
 
-const TYPE_META = {
-  double: { label: 'Double Room', icon: BedDouble, bg: 'bg-teal-800', bgSoft: 'bg-teal-50', text: 'text-teal-800', border: 'border-teal-200', ring: 'ring-teal-700' },
-  cabana: { label: 'Cabana', icon: Umbrella, bg: 'bg-amber-700', bgSoft: 'bg-amber-50', text: 'text-amber-800', border: 'border-amber-200', ring: 'ring-amber-600' },
-  triple: { label: 'Triple Room', icon: Users, bg: 'bg-stone-700', bgSoft: 'bg-stone-100', text: 'text-stone-800', border: 'border-stone-300', ring: 'ring-stone-600' },
-  family: { label: 'Family Room', icon: Home, bg: 'bg-rose-800', bgSoft: 'bg-rose-50', text: 'text-rose-800', border: 'border-rose-200', ring: 'ring-rose-700' },
-};
+    const SOURCE_OPTIONS = ['Nirmal', 'Travel Corner', 'වෙනත්'];
 
-const BOOKING_TYPES = {
-  dayout: { label: 'Day out', short: 'Day', time: '10.00 AM - 5.00 PM', badge: 'bg-sky-100 text-sky-700' },
-  nightout: { label: 'Night out', short: 'Night', time: '6.30 PM - 8.00 AM', badge: 'bg-indigo-100 text-indigo-700' },
-  standard: { label: 'Standard (රාත්‍රී නවාතැන්)', short: 'Std', time: '2.00 PM - 11.00 AM', badge: 'bg-teal-100 text-teal-700' },
-  custom: { label: 'Custom (ඔබම දිනය/වේලාව)', short: 'Custom', time: 'ඔබ දෙන වේලාව', badge: 'bg-purple-100 text-purple-700' },
-};
+    const SI_MONTHS = ['ජනවාරි', 'පෙබරවාරි', 'මාර්තු', 'අප්‍රේල්', 'මැයි', 'ජූනි', 'ජූලි', 'අගෝස්තු', 'සැප්තැම්බර්', 'ඔක්තෝබර්', 'නොවැම්බර්', 'දෙසැම්බර්'];
+    const SI_DAYS = ['ඉරි', 'සඳු', 'අඟ', 'බදා', 'බ්‍රහ', 'සිකු', 'සෙන'];
 
-const DEFAULT_CONFIG = { double: 4, cabana: 5, triple: 2, family: 1 };
+    function todayISO() {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    }
 
-const SI_MONTHS = ['ජනවාරි', 'පෙබරවාරි', 'මාර්තු', 'අප්‍රේල්', 'මැයි', 'ජූනි', 'ජූලි', 'අගෝස්තු', 'සැප්තැම්බර්', 'ඔක්තෝබර්', 'නොවැම්බර්', 'දෙසැම්බර්'];
-const SI_WEEKDAYS = ['ඉරි', 'සඳු', 'අඟ', 'බදා', 'බ්‍රහ', 'සිකු', 'සෙන'];
+    function currentMonthISO() {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    }
 
-function pad2(n) { return String(n).padStart(2, '0'); }
+    function formatMonthLabel(ym) {
+      if (!ym) return '';
+      const [y, m] = ym.split('-').map(Number);
+      return `${y} ${SI_MONTHS[m - 1]}`;
+    }
 
-function todayISO() {
-  const d = new Date();
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-}
+    function bookingCoversDate(booking, isoDate) {
+      if (!booking || !booking.date || !isoDate) return false;
+      const start = booking.type === 'Custom Time' && booking.customCheckInDate ? booking.customCheckInDate : booking.date;
+      const end = booking.type === 'Custom Time' && booking.customCheckOutDate ? booking.customCheckOutDate : start;
+      const effectiveEnd = end >= start ? end : start;
+      return isoDate >= start && isoDate <= effectiveEnd;
+    }
 
-function addDaysISO(iso, days) {
-  const [y, m, d] = iso.split('-').map(Number);
-  const dt = new Date(y, m - 1, d);
-  dt.setDate(dt.getDate() + days);
-  return `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`;
-}
+    function App() {
+      const [isAdmin, setIsAdmin] = useState(false);
+      const [showPinModal, setShowPinModal] = useState(false);
+      const [pinInput, setPinInput] = useState('');
+      const [pinError, setPinError] = useState('');
 
-function formatSiDate(iso) {
-  if (!iso) return '';
-  const [y, m, d] = iso.split('-').map(Number);
-  return `${d} ${SI_MONTHS[m - 1]} ${y}`;
-}
+      const [tab, setTab] = useState('dashboard');
 
-function formatTime12(hh, mm) {
-  const period = hh >= 12 ? 'PM' : 'AM';
-  let h12 = hh % 12;
-  if (h12 === 0) h12 = 12;
-  return `${h12}.${pad2(mm)} ${period}`;
-}
+      // Room Config State
+      const [roomConfig, setRoomConfig] = useState(() => {
+        const saved = localStorage.getItem('gs_room_config_v1');
+        return saved ? JSON.parse(saved) : DEFAULT_ROOM_CONFIG;
+      });
 
-function timeOnly(dtStr) {
-  if (!dtStr) return '';
-  const timePart = dtStr.split('T')[1];
-  const [hh, mm] = timePart.split(':').map(Number);
-  return formatTime12(hh, mm);
-}
+      const [newRoomName, setNewRoomName] = useState('');
+      const [newRoomTotal, setNewRoomTotal] = useState('1');
 
-function formatSiDateTime(dtStr) {
-  if (!dtStr) return '';
-  const [datePart, timePart] = dtStr.split('T');
-  const [hh, mm] = timePart.split(':').map(Number);
-  return `${formatSiDate(datePart)}, ${formatTime12(hh, mm)}`;
-}
+      // Bookings State
+      const [bookings, setBookings] = useState(() => {
+        const saved = localStorage.getItem('gs_bookings_v4');
+        if (saved) return JSON.parse(saved);
+        const v3 = localStorage.getItem('gs_bookings_v3');
+        if (v3) return JSON.parse(v3);
+        const legacy = localStorage.getItem('gs_bookings_v2');
+        return legacy ? JSON.parse(legacy) : [];
+      });
 
-function daysInMonth(year, monthIndex0) {
-  return new Date(year, monthIndex0 + 1, 0).getDate();
-}
+      // Expenses State
+      const [expenses, setExpenses] = useState(() => {
+        const saved = localStorage.getItem('gs_expenses_v1');
+        return saved ? JSON.parse(saved) : [];
+      });
 
-function rangesOverlap(aStart, aEnd, bStart, bEnd) {
-  return aStart < bEnd && bStart < aEnd;
-}
+      const roomKeys = Object.keys(roomConfig);
+      const defaultRoomKey = roomKeys[0] || 'Double';
 
-function bookingTouchesDate(booking, dateStr) {
-  const dayStart = `${dateStr}T00:00`;
-  const dayEnd = `${addDaysISO(dateStr, 1)}T00:00`;
-  return rangesOverlap(dayStart, dayEnd, booking.checkIn, booking.checkOut);
-}
+      // Add Booking Form State
+      const [formData, setFormData] = useState({
+        guest: '',
+        price: '',
+        source: 'Nirmal',
+        notes: '',
+        roomType: defaultRoomKey,
+        type: 'Day Out',
+        customCheckInDate: todayISO(),
+        customCheckInTime: '',
+        customCheckOutDate: todayISO(),
+        customCheckOutTime: '',
+        date: todayISO()
+      });
 
-function daySlotWindow(dateStr) { return [`${dateStr}T10:00`, `${dateStr}T17:00`]; }
-function nightSlotWindow(dateStr) { return [`${dateStr}T18:30`, `${addDaysISO(dateStr, 1)}T08:00`]; }
+      // Edit Booking Modal State
+      const [editingBooking, setEditingBooking] = useState(null);
 
-function daysBetweenISO(a, b) {
-  const [ay, am, ad] = a.split('-').map(Number);
-  const [by, bm, bd] = b.split('-').map(Number);
-  const d1 = new Date(ay, am - 1, ad);
-  const d2 = new Date(by, bm - 1, bd);
-  return Math.round((d2 - d1) / 86400000);
-}
+      // Edit Expense Modal State
+      const [editingExpense, setEditingExpense] = useState(null);
 
-function getRoomsForType(type, config) {
-  const count = config[type] || 0;
-  const rooms = [];
-  for (let i = 1; i <= count; i++) {
-    rooms.push({ id: `${type}-${i}`, type, number: i, label: `${TYPE_META[type].label} ${i}` });
-  }
-  return rooms;
-}
+      // Calendar State
+      const [calYear, setCalYear] = useState(() => new Date().getFullYear());
+      const [calMonth, setCalMonth] = useState(() => new Date().getMonth());
+      const [selectedCalDate, setSelectedCalDate] = useState(todayISO());
 
-function getAllRooms(config) {
-  return TYPE_ORDER.flatMap(t => getRoomsForType(t, config));
-}
+      // Monthly Filter States
+      const [bookingFilterMonth, setBookingFilterMonth] = useState(currentMonthISO());
+      const [expenseFilterMonth, setExpenseFilterMonth] = useState(currentMonthISO());
 
-function genId() {
-  return 'bk_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-}
+      // Expense Form State
+      const [expForm, setExpForm] = useState({
+        title: '',
+        amount: '',
+        date: todayISO()
+      });
 
-function FontLoader() {
-  useEffect(() => {
-    const id = 'room-booking-fonts-link';
-    if (document.getElementById(id)) return;
-    const link = document.createElement('link');
-    link.id = id;
-    link.rel = 'stylesheet';
-    link.href = 'https://fonts.googleapis.com/css2?family=Manrope:wght@600;700;800&family=Inter:wght@400;500;600&family=Noto+Sans+Sinhala:wght@400;600;700&display=swap';
-    document.head.appendChild(link);
-  }, []);
-  return null;
-}
+      useEffect(() => {
+        localStorage.setItem('gs_room_config_v1', JSON.stringify(roomConfig));
+      }, [roomConfig]);
 
-function Header({ saving }) {
-  return (
-    <header className="bg-teal-900 text-white px-4 py-4 sticky top-0 z-20 shadow-sm">
-      <div className="max-w-2xl mx-auto flex items-center justify-between">
-        <div>
-          <h1 className="text-lg font-bold tracking-tight" style={{ fontFamily: "'Manrope',sans-serif" }}>Room Booking</h1>
-          <p className="text-teal-300 text-xs">කාමර වෙන්කිරීම් කළමනාකරු (Live Sync)</p>
-        </div>
-        <div className="text-teal-300 text-xs flex items-center gap-1.5 h-4">
-          {saving ? (
-            <>
-              <RefreshCw className="animate-spin" size={12} />
-              <span>සූදානම් වෙමින්...</span>
-            </>
-          ) : (
-            <span className="bg-teal-800 text-teal-200 text-[10px] px-2 py-0.5 rounded-full font-medium">Online</span>
-          )}
-        </div>
-      </div>
-    </header>
-  );
-}
+      useEffect(() => {
+        localStorage.setItem('gs_bookings_v4', JSON.stringify(bookings));
+      }, [bookings]);
 
-function Toast({ toast }) {
-  return (
-    <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-30">
-      <div className={`px-4 py-2 rounded-full text-sm text-white shadow-lg ${toast.kind === 'error' ? 'bg-rose-600' : 'bg-teal-800'}`}>
-        {toast.text}
-      </div>
-    </div>
-  );
-}
+      useEffect(() => {
+        localStorage.setItem('gs_expenses_v1', JSON.stringify(expenses));
+      }, [expenses]);
 
-function BottomNav({ active, onChange }) {
-  const items = [
-    { key: 'dashboard', icon: Home, label: 'මුල් පිටුව' },
-    { key: 'add', icon: CalendarPlus, label: 'එකතු කරන්න' },
-    { key: 'calendar', icon: CalendarDays, label: 'Calendar' },
-    { key: 'bookings', icon: ListChecks, label: 'Booking' },
-    { key: 'settings', icon: Settings2, label: 'සැකසුම්' },
-  ];
-  return (
-    <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-stone-200 z-20">
-      <div className="max-w-2xl mx-auto grid grid-cols-5">
-        {items.map(item => {
-          const Icon = item.icon;
-          const isActive = active === item.key;
-          return (
-            <button key={item.key} onClick={() => onChange(item.key)} className={`flex flex-col items-center gap-0.5 py-2.5 ${isActive ? 'text-teal-800' : 'text-stone-400'}`}>
-              <Icon size={20} strokeWidth={isActive ? 2.4 : 2} />
-              <span className="text-[10px] font-medium">{item.label}</span>
-            </button>
-          );
-        })}
-      </div>
-    </nav>
-  );
-}
+      // If user logs out of Admin while on a restricted tab, go back to dashboard
+      useEffect(() => {
+        if (!isAdmin && (tab === 'add' || tab === 'bookings' || tab === 'expenses' || tab === 'rooms')) {
+          setTab('dashboard');
+        }
+      }, [isAdmin, tab]);
 
-function Dashboard({ config, bookings, onNavigate }) {
-  const today = todayISO();
-  const rooms = useMemo(() => getAllRooms(config), [config]);
-  const totalRooms = rooms.length;
+      const handleAdminButtonClick = () => {
+        if (isAdmin) {
+          setIsAdmin(false);
+        } else {
+          setPinInput('');
+          setPinError('');
+          setShowPinModal(true);
+        }
+      };
 
-  const [dayStart, dayEnd] = daySlotWindow(today);
-  const [nightStart, nightEnd] = nightSlotWindow(today);
+      const handleVerifyPin = (e) => {
+        e.preventDefault();
+        if (pinInput.trim() === ADMIN_PIN) {
+          setIsAdmin(true);
+          setShowPinModal(false);
+          setPinInput('');
+          setPinError('');
+        } else {
+          setPinError('PIN අංකය වැරදියි. නැවත උත්සාහ කරන්න.');
+        }
+      };
 
-  const dayFree = useMemo(() =>
-    totalRooms - rooms.filter(r => bookings.some(b => b.roomId === r.id && rangesOverlap(dayStart, dayEnd, b.checkIn, b.checkOut))).length,
-    [rooms, bookings, dayStart, dayEnd, totalRooms]
-  );
-  const nightFree = useMemo(() =>
-    totalRooms - rooms.filter(r => bookings.some(b => b.roomId === r.id && rangesOverlap(nightStart, nightEnd, b.checkIn, b.checkOut))).length,
-    [rooms, bookings, nightStart, nightEnd, totalRooms]
-  );
+      const adjustRoomCount = (key, delta) => {
+        if (!isAdmin) return;
+        setRoomConfig(prev => {
+          const current = prev[key];
+          if (!current) return prev;
+          const nextTotal = Math.max(0, Number(current.total || 0) + delta);
+          return {
+            ...prev,
+            [key]: { ...current, total: nextTotal }
+          };
+        });
+      };
 
-  const arrivalsToday = useMemo(() => bookings.filter(b => b.checkIn.startsWith(today)).sort((a, b) => a.checkIn.localeCompare(b.checkIn)), [bookings, today]);
-  const departuresToday = useMemo(() => bookings.filter(b => b.checkOut.startsWith(today)).sort((a, b) => a.checkOut.localeCompare(b.checkOut)), [bookings, today]);
+      const handleAddRoomType = (e) => {
+        e.preventDefault();
+        if (!isAdmin) return;
+        const cleanName = newRoomName.trim();
+        const count = Math.max(0, Number(newRoomTotal) || 0);
+        if (!cleanName) return alert('කරුණාකර Room වර්ගයේ නම ඇතුළත් කරන්න.');
+        if (roomConfig[cleanName]) return alert('මෙම Room වර්ගය දැනටමත් පවතී.');
 
-  const upcoming = useMemo(() =>
-    bookings.filter(b => b.checkOut > `${today}T00:00`).sort((a, b) => a.checkIn.localeCompare(b.checkIn)).slice(0, 5),
-    [bookings, today]
-  );
+        const style = EXTRA_STYLES[Object.keys(roomConfig).length % EXTRA_STYLES.length];
+        setRoomConfig(prev => ({
+          ...prev,
+          [cleanName]: {
+            label: cleanName,
+            total: count,
+            color: style.color,
+            soft: style.soft
+          }
+        }));
+        setNewRoomName('');
+        setNewRoomTotal('1');
+      };
 
-  return (
-    <div className="pt-4 space-y-5">
-      <div className="grid grid-cols-2 gap-3">
-        <div className="bg-white rounded-2xl border border-stone-200 p-4">
-          <p className="text-xs text-stone-500">අද Day out හිස්</p>
-          <p className="text-2xl font-bold text-sky-700" style={{ fontFamily: "'Manrope',sans-serif" }}>
-            {dayFree}<span className="text-sm text-stone-400 font-medium"> / {totalRooms}</span>
-          </p>
-        </div>
-        <div className="bg-white rounded-2xl border border-stone-200 p-4">
-          <p className="text-xs text-stone-500">අද Night out හිස්</p>
-          <p className="text-2xl font-bold text-indigo-700" style={{ fontFamily: "'Manrope',sans-serif" }}>
-            {nightFree}<span className="text-sm text-stone-400 font-medium"> / {totalRooms}</span>
-          </p>
-        </div>
-      </div>
+      // Add Booking Handler
+      const handleAddBooking = (e) => {
+        e.preventDefault();
+        if (!isAdmin) return;
+        if (!formData.guest.trim() || !formData.price) {
+          return alert('කරුණාකර Guest Name සහ Price ඇතුළත් කරන්න.');
+        }
+        const isCustom = formData.type === 'Custom Time';
+        const effectiveDate = isCustom && formData.customCheckInDate ? formData.customCheckInDate : formData.date;
+        const newBooking = {
+          id: Date.now(),
+          guest: formData.guest.trim(),
+          price: Number(formData.price),
+          source: formData.source || 'Nirmal',
+          notes: formData.notes.trim(),
+          roomType: formData.roomType || defaultRoomKey,
+          type: formData.type,
+          customCheckInDate: isCustom ? (formData.customCheckInDate || effectiveDate) : '',
+          customCheckInTime: isCustom ? formData.customCheckInTime : '',
+          customCheckOutDate: isCustom ? (formData.customCheckOutDate || formData.customCheckInDate || effectiveDate) : '',
+          customCheckOutTime: isCustom ? formData.customCheckOutTime : '',
+          date: effectiveDate,
+          status: 'pending'
+        };
+        setBookings([newBooking, ...bookings]);
+        setFormData({
+          guest: '',
+          price: '',
+          source: 'Nirmal',
+          notes: '',
+          roomType: defaultRoomKey,
+          type: 'Day Out',
+          customCheckInDate: todayISO(),
+          customCheckInTime: '',
+          customCheckOutDate: todayISO(),
+          customCheckOutTime: '',
+          date: todayISO()
+        });
+        setBookingFilterMonth(newBooking.date.slice(0, 7));
+        setTab('bookings');
+      };
 
-      <div className="grid grid-cols-2 gap-3">
-        {TYPE_ORDER.map(type => {
-          const meta = TYPE_META[type];
-          const Icon = meta.icon;
-          const total = config[type] || 0;
-          const typeRooms = rooms.filter(r => r.type === type);
-          const dFree = typeRooms.filter(r => !bookings.some(b => b.roomId === r.id && rangesOverlap(dayStart, dayEnd, b.checkIn, b.checkOut))).length;
-          const nFree = typeRooms.filter(r => !bookings.some(b => b.roomId === r.id && rangesOverlap(nightStart, nightEnd, b.checkIn, b.checkOut))).length;
-          return (
-            <div key={type} className={`rounded-2xl border ${meta.border} ${meta.bgSoft} p-3`}>
-              <div className="flex items-center gap-2 mb-1">
-                <Icon className={meta.text} size={18} />
-                <p className={`text-xs font-medium ${meta.text}`}>{meta.label}</p>
+      // Save Edited Booking
+      const handleSaveEdit = (e) => {
+        e.preventDefault();
+        if (!isAdmin) return;
+        if (!editingBooking.guest.trim() || editingBooking.price === '') {
+          return alert('කරුණාකර Guest Name සහ Price ඇතුළත් කරන්න.');
+        }
+        const isCustom = editingBooking.type === 'Custom Time';
+        const effectiveDate = isCustom && editingBooking.customCheckInDate ? editingBooking.customCheckInDate : editingBooking.date;
+        setBookings(bookings.map(b => b.id === editingBooking.id ? {
+          ...editingBooking,
+          guest: editingBooking.guest.trim(),
+          price: Number(editingBooking.price),
+          notes: (editingBooking.notes || '').trim(),
+          customCheckInDate: isCustom ? (editingBooking.customCheckInDate || effectiveDate) : '',
+          customCheckInTime: isCustom ? (editingBooking.customCheckInTime || '') : '',
+          customCheckOutDate: isCustom ? (editingBooking.customCheckOutDate || editingBooking.customCheckInDate || effectiveDate) : '',
+          customCheckOutTime: isCustom ? (editingBooking.customCheckOutTime || '') : '',
+          date: effectiveDate
+        } : b));
+        setEditingBooking(null);
+      };
+
+      // Set Attendance Status once
+      const selectAttendanceOnce = (id, status) => {
+        if (!isAdmin) return;
+        setBookings(bookings.map(b => {
+          if (b.id !== id) return b;
+          if (b.status === 'arrived' || b.status === 'not_arrived') return b;
+          return { ...b, status };
+        }));
+      };
+
+      // Delete Booking
+      const deleteBooking = (id) => {
+        if (!isAdmin) return;
+        if (confirm('මෙම Booking එක ඉවත් කිරීමට අවශ්‍යද?')) {
+          setBookings(bookings.filter(b => b.id !== id));
+        }
+      };
+
+      // Add Expense Handler
+      const handleAddExpense = (e) => {
+        e.preventDefault();
+        if (!isAdmin) return;
+        if (!expForm.title.trim() || !expForm.amount) {
+          return alert('කරුණාකර වියදම් විස්තරය සහ මුදල ඇතුළත් කරන්න.');
+        }
+        const newExpense = {
+          id: Date.now(),
+          title: expForm.title.trim(),
+          amount: Number(expForm.amount),
+          date: expForm.date
+        };
+        setExpenses([newExpense, ...expenses]);
+        setExpenseFilterMonth(newExpense.date.slice(0, 7));
+        setExpForm({
+          title: '',
+          amount: '',
+          date: todayISO()
+        });
+      };
+
+      // Save Edited Expense
+      const handleSaveExpenseEdit = (e) => {
+        e.preventDefault();
+        if (!isAdmin) return;
+        if (!editingExpense.title.trim() || editingExpense.amount === '') {
+          return alert('කරුණාකර වියදම් විස්තරය සහ මුදල ඇතුළත් කරන්න.');
+        }
+        setExpenses(expenses.map(ex => ex.id === editingExpense.id ? {
+          ...editingExpense,
+          title: editingExpense.title.trim(),
+          amount: Number(editingExpense.amount),
+          date: editingExpense.date
+        } : ex));
+        setEditingExpense(null);
+      };
+
+      // Delete Expense
+      const deleteExpense = (id) => {
+        if (!isAdmin) return;
+        if (confirm('මෙම වියදම ඉවත් කිරීමට අවශ්‍යද?')) {
+          setExpenses(expenses.filter(ex => ex.id !== id));
+        }
+      };
+
+      // Total Rooms Capacity
+      const totalRoomsCapacity = useMemo(() => {
+        return Object.values(roomConfig).reduce((sum, r) => sum + (Number(r.total) || 0), 0);
+      }, [roomConfig]);
+
+      // Today stats for Dashboard
+      const today = todayISO();
+      const todayBookings = bookings.filter(b => bookingCoversDate(b, today));
+      const todayDayOut = todayBookings.filter(b => b.type === 'Day Out').length;
+      const todayNightOut = todayBookings.filter(b => b.type === 'Night Out' || b.type === '1 Night Standard').length;
+
+      // Calendar Grid Calculation
+      const calendarDays = useMemo(() => {
+        const firstDay = new Date(calYear, calMonth, 1).getDay();
+        const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+        const cells = [];
+        for (let i = 0; i < firstDay; i++) cells.push(null);
+        for (let d = 1; d <= daysInMonth; d++) {
+          const iso = `${calYear}-${String(calMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+          cells.push({ day: d, iso });
+        }
+        return cells;
+      }, [calYear, calMonth]);
+
+      const selectedDateBookings = bookings.filter(b => bookingCoversDate(b, selectedCalDate));
+
+      // Monthly Bookings & Totals
+      const monthlyBookings = useMemo(() => {
+        return bookings
+          .filter(b => b.date && b.date.startsWith(bookingFilterMonth))
+          .sort((a, b) => a.date.localeCompare(b.date));
+      }, [bookings, bookingFilterMonth]);
+
+      const bookingStats = useMemo(() => {
+        const arrivedList = monthlyBookings.filter(b => b.status === 'arrived');
+        const notArrivedList = monthlyBookings.filter(b => b.status === 'not_arrived');
+        const arrivedTotal = arrivedList.reduce((sum, b) => sum + (Number(b.price) || 0), 0);
+        const notArrivedTotal = notArrivedList.reduce((sum, b) => sum + (Number(b.price) || 0), 0);
+        const allTotal = monthlyBookings.reduce((sum, b) => sum + (Number(b.price) || 0), 0);
+
+        const bySource = {};
+        SOURCE_OPTIONS.forEach(src => {
+          const list = monthlyBookings.filter(b => (b.source || 'වෙනත්') === src);
+          const arrivedSrcTotal = list
+            .filter(b => b.status === 'arrived')
+            .reduce((sum, b) => sum + (Number(b.price) || 0), 0);
+          const notArrivedSrcTotal = list
+            .filter(b => b.status === 'not_arrived')
+            .reduce((sum, b) => sum + (Number(b.price) || 0), 0);
+          bySource[src] = { arrivedSrcTotal, notArrivedSrcTotal };
+        });
+
+        return {
+          arrivedCount: arrivedList.length,
+          arrivedTotal,
+          notArrivedCount: notArrivedList.length,
+          notArrivedTotal,
+          allTotal,
+          bySource
+        };
+      }, [monthlyBookings]);
+
+      // Monthly Expenses & Total
+      const monthlyExpenses = useMemo(() => {
+        return expenses
+          .filter(ex => ex.date && ex.date.startsWith(expenseFilterMonth))
+          .sort((a, b) => b.date.localeCompare(a.date));
+      }, [expenses, expenseFilterMonth]);
+
+      const monthlyExpenseTotal = useMemo(() => {
+        return monthlyExpenses.reduce((sum, ex) => sum + (Number(ex.amount) || 0), 0);
+      }, [monthlyExpenses]);
+
+      const changeCalMonth = (delta) => {
+        let m = calMonth + delta;
+        let y = calYear;
+        if (m < 0) { m = 11; y -= 1; }
+        if (m > 11) { m = 0; y += 1; }
+        setCalMonth(m);
+        setCalYear(y);
+      };
+
+      const renderPackageText = (b) => {
+        if (b.type === 'Custom Time') {
+          const ciDate = b.customCheckInDate || b.date || '';
+          const ciTime = b.customCheckInTime || '--:--';
+          const coDate = b.customCheckOutDate || b.customCheckInDate || b.date || '';
+          const coTime = b.customCheckOutTime || '--:--';
+          return `Custom (${ciDate} ${ciTime} → ${coDate} ${coTime})`;
+        }
+        return b.type;
+      };
+
+      const renderBookingCard = (b, showDelete = true) => {
+        const isDecided = b.status === 'arrived' || b.status === 'not_arrived';
+        return (
+          <div key={b.id} className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm space-y-2">
+            <div className="flex justify-between items-start">
+              <div>
+                <p className="text-sm font-bold text-slate-800">{b.guest}</p>
+                <p className="text-xs text-slate-500">{b.date} • {b.roomType} • {renderPackageText(b)}</p>
+                <p className="text-xs text-slate-600 mt-0.5">කාණ්ඩය: <span className="font-semibold">{b.source || 'වෙනත්'}</span></p>
+                {b.notes && <p className="text-xs text-slate-600 mt-1 bg-slate-50 px-2 py-1 rounded">සටහන: {b.notes}</p>}
               </div>
-              <p className="text-xs text-stone-600">Day {dFree}/{total} · Night {nFree}/{total}</p>
-            </div>
-          );
-        })}
-      </div>
-
-      {(arrivalsToday.length > 0 || departuresToday.length > 0) && (
-        <div className="bg-white rounded-2xl border border-stone-200 p-4 space-y-2">
-          <p className="text-sm font-semibold text-stone-700">අද</p>
-          {arrivalsToday.map(b => (
-            <div key={b.id} className="flex items-center justify-between text-sm">
-              <span className="text-stone-600">{b.guestName} · {b.roomLabel}</span>
-              <span className="text-emerald-700 text-xs font-medium">{BOOKING_TYPES[b.bookingType]?.short || 'Std'} check-in · {timeOnly(b.checkIn)}</span>
-            </div>
-          ))}
-          {departuresToday.map(b => (
-            <div key={b.id} className="flex items-center justify-between text-sm">
-              <span className="text-stone-600">{b.guestName} · {b.roomLabel}</span>
-              <span className="text-rose-700 text-xs font-medium">Check-out · {timeOnly(b.checkOut)}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div className="bg-white rounded-2xl border border-stone-200 p-4">
-        <div className="flex items-center justify-between mb-3">
-          <p className="text-sm font-semibold text-stone-700">එන Booking</p>
-          <button onClick={() => onNavigate('bookings')} className="text-xs text-teal-700 font-medium">සියල්ල →</button>
-        </div>
-        {upcoming.length === 0 ? (
-          <p className="text-sm text-stone-400">Booking නෑ</p>
-        ) : (
-          <div className="space-y-2">
-            {upcoming.map(b => (
-              <div key={b.id} className="text-sm border-b border-stone-100 last:border-0 pb-2 last:pb-0">
-                <div className="flex items-center gap-2">
-                  <p className="text-stone-700 font-medium">{b.guestName}</p>
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${BOOKING_TYPES[b.bookingType]?.badge}`}>{BOOKING_TYPES[b.bookingType]?.short}</span>
-                </div>
-                <p className="text-stone-400 text-xs">{b.roomLabel} · {formatSiDateTime(b.checkIn)} → {formatSiDateTime(b.checkOut)}</p>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <button onClick={() => onNavigate('add')} className="w-full bg-teal-800 text-white rounded-2xl py-3.5 font-semibold flex items-center justify-center gap-2 active:bg-teal-900">
-        <CalendarPlus size={18} /> අලුත් Booking එකතු කරන්න
-      </button>
-    </div>
-  );
-}
-
-function AddBooking({ config, bookings, onAdd, showToast, onDone }) {
-  const today = todayISO();
-  const [bookingType, setBookingType] = useState('standard');
-  const [singleDate, setSingleDate] = useState(today);
-  const [checkInDate, setCheckInDate] = useState(today);
-  const [checkOutDate, setCheckOutDate] = useState(addDaysISO(today, 1));
-  const [customCheckInDate, setCustomCheckInDate] = useState(today);
-  const [customCheckInTime, setCustomCheckInTime] = useState('14:00');
-  const [customCheckOutDate, setCustomCheckOutDate] = useState(addDaysISO(today, 1));
-  const [customCheckOutTime, setCustomCheckOutTime] = useState('11:00');
-  const [type, setType] = useState('double');
-  const [selectedRoomId, setSelectedRoomId] = useState('');
-  const [guestName, setGuestName] = useState('');
-  const [phone, setPhone] = useState('');
-  const [notes, setNotes] = useState('');
-  const [error, setError] = useState('');
-
-  const { checkIn, checkOut, validRange, nights } = useMemo(() => {
-    if (bookingType === 'dayout') {
-      return { checkIn: `${singleDate}T10:00`, checkOut: `${singleDate}T17:00`, validRange: true, nights: 0 };
-    }
-    if (bookingType === 'nightout') {
-      return { checkIn: `${singleDate}T18:30`, checkOut: `${addDaysISO(singleDate, 1)}T08:00`, validRange: true, nights: 1 };
-    }
-    if (bookingType === 'custom') {
-      const ci = `${customCheckInDate}T${customCheckInTime}`;
-      const co = `${customCheckOutDate}T${customCheckOutTime}`;
-      return { checkIn: ci, checkOut: co, validRange: ci < co, nights: null };
-    }
-    const valid = checkInDate < checkOutDate;
-    return { checkIn: `${checkInDate}T14:00`, checkOut: `${checkOutDate}T11:00`, validRange: valid, nights: valid ? daysBetweenISO(checkInDate, checkOutDate) : 0 };
-  }, [bookingType, singleDate, checkInDate, checkOutDate, customCheckInDate, customCheckInTime, customCheckOutDate, customCheckOutTime]);
-
-  const availabilityByType = useMemo(() => {
-    const result = {};
-    TYPE_ORDER.forEach(t => {
-      const rooms = getRoomsForType(t, config);
-      const free = validRange
-        ? rooms.filter(r => !bookings.some(b => b.roomId === r.id && rangesOverlap(checkIn, checkOut, b.checkIn, b.checkOut)))
-        : [];
-      result[t] = { free, total: rooms.length };
-    });
-    return result;
-  }, [config, bookings, checkIn, checkOut, validRange]);
-
-  const availableRooms = availabilityByType[type] ? availabilityByType[type].free : [];
-
-  useEffect(() => {
-    if (availableRooms.length > 0) {
-      if (!availableRooms.some(r => r.id === selectedRoomId)) setSelectedRoomId(availableRooms[0].id);
-    } else {
-      setSelectedRoomId('');
-    }
-  }, [type, checkIn, checkOut, config, bookings]);
-
-  const handleSubmit = () => {
-    setError('');
-    if (!validRange) { setError('Check-out එක check-in එකට වඩා පස්සේ විය යුතුයි'); return; }
-    if (!selectedRoomId) { setError('මේ වේලාවට කාමරයක් හිස් නෑ'); return; }
-    if (!guestName.trim()) { setError('Guest නම ඇතුළත් කරන්න'); return; }
-
-    const room = getRoomsForType(type, config).find(r => r.id === selectedRoomId);
-    const booking = {
-      id: genId(),
-      roomId: room.id,
-      roomType: type,
-      roomNumber: room.number,
-      roomLabel: room.label,
-      bookingType,
-      guestName: guestName.trim(),
-      phone: phone.trim(),
-      checkIn,
-      checkOut,
-      notes: notes.trim(),
-      createdAt: Date.now(),
-    };
-    onAdd(booking);
-    showToast(`${booking.roomLabel} - ${booking.guestName} වෙන් කළා`);
-    setGuestName(''); setPhone(''); setNotes('');
-    onDone();
-  };
-
-  return (
-    <div className="pt-4 space-y-5 pb-4">
-      <div>
-        <label className="text-xs font-medium text-stone-500 mb-2 block">Booking වර්ගය</label>
-        <div className="space-y-2">
-          {Object.entries(BOOKING_TYPES).map(([key, meta]) => (
-            <button
-              key={key}
-              onClick={() => setBookingType(key)}
-              className={`w-full text-left rounded-xl border p-3 flex items-center justify-between ${bookingType === key ? 'border-teal-700 bg-teal-50 ring-2 ring-teal-700' : 'border-stone-200 bg-white'}`}
-            >
-              <span className="text-sm font-medium text-stone-700">{meta.label}</span>
-              <span className="text-xs text-stone-500">{meta.time}</span>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {bookingType === 'standard' ? (
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="text-xs font-medium text-stone-500 mb-1 block">Check-in දිනය</label>
-            <input type="date" value={checkInDate} onChange={e => setCheckInDate(e.target.value)} className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm text-stone-700" />
-          </div>
-          <div>
-            <label className="text-xs font-medium text-stone-500 mb-1 block">Check-out දිනය</label>
-            <input type="date" value={checkOutDate} min={addDaysISO(checkInDate, 1)} onChange={e => setCheckOutDate(e.target.value)} className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm text-stone-700" />
-          </div>
-          {validRange && <p className="col-span-2 text-xs text-stone-400">{nights} රාත්‍රී · {formatSiDateTime(checkIn)} → {formatSiDateTime(checkOut)}</p>}
-        </div>
-      ) : bookingType === 'custom' ? (
-        <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-medium text-stone-500 mb-1 block">Check-in දිනය</label>
-              <input type="date" value={customCheckInDate} onChange={e => setCustomCheckInDate(e.target.value)} className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm text-stone-700" />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-stone-500 mb-1 block">Check-in වේලාව</label>
-              <input type="time" value={customCheckInTime} onChange={e => setCustomCheckInTime(e.target.value)} className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm text-stone-700" />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-medium text-stone-500 mb-1 block">Check-out දිනය</label>
-              <input type="date" value={customCheckOutDate} onChange={e => setCustomCheckOutDate(e.target.value)} className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm text-stone-700" />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-stone-500 mb-1 block">Check-out වේලාව</label>
-              <input type="time" value={customCheckOutTime} onChange={e => setCustomCheckOutTime(e.target.value)} className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm text-stone-700" />
-            </div>
-          </div>
-          {validRange ? (
-            <p className="text-xs text-stone-400">{formatSiDateTime(checkIn)} → {formatSiDateTime(checkOut)}</p>
-          ) : (
-            <p className="text-xs text-rose-500">Check-out එක check-in එකට වඩා පස්සේ විය යුතුයි</p>
-          )}
-        </div>
-      ) : (
-        <div>
-          <label className="text-xs font-medium text-stone-500 mb-1 block">{bookingType === 'nightout' ? 'රාත්‍රියේ දිනය' : 'දිනය'}</label>
-          <input type="date" value={singleDate} onChange={e => setSingleDate(e.target.value)} className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm text-stone-700" />
-          <p className="text-xs text-stone-400 mt-1">{formatSiDateTime(checkIn)} → {formatSiDateTime(checkOut)}</p>
-        </div>
-      )}
-
-      <div>
-        <label className="text-xs font-medium text-stone-500 mb-2 block">කාමර වර්ගය</label>
-        <div className="grid grid-cols-2 gap-2">
-          {TYPE_ORDER.map(t => {
-            const meta = TYPE_META[t];
-            const Icon = meta.icon;
-            const avail = availabilityByType[t];
-            const isActive = type === t;
-            return (
-              <button
-                key={t}
-                onClick={() => setType(t)}
-                className={`rounded-xl border p-3 text-left transition ${isActive ? `${meta.border} ${meta.bgSoft} ring-2 ${meta.ring}` : 'border-stone-200 bg-white'}`}
-              >
-                <Icon className={meta.text} size={18} />
-                <p className="text-sm font-medium text-stone-700 mt-1">{meta.label}</p>
-                <p className={`text-xs mt-0.5 ${avail && avail.free.length > 0 ? 'text-emerald-600' : 'text-rose-500'}`}>
-                  {avail ? avail.free.length : 0}/{avail ? avail.total : 0} available
-                </p>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {validRange && (
-        <div>
-          <label className="text-xs font-medium text-stone-500 mb-2 block">කාමර අංකය</label>
-          {availableRooms.length === 0 ? (
-            <p className="text-sm text-rose-600 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2.5">මේ වේලාවට {TYPE_META[type].label} හිස් නෑ</p>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {availableRooms.map(r => (
-                <button
-                  key={r.id}
-                  onClick={() => setSelectedRoomId(r.id)}
-                  className={`px-3 py-2 rounded-xl text-sm border ${selectedRoomId === r.id ? `${TYPE_META[type].bg} text-white border-transparent` : 'border-stone-300 text-stone-600 bg-white'}`}
-                >
-                  {r.label}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      <div>
-        <label className="text-xs font-medium text-stone-500 mb-1 block">Guest නම</label>
-        <input type="text" value={guestName} onChange={e => setGuestName(e.target.value)} placeholder="උදා: Nimal Perera" className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm text-stone-700" />
-      </div>
-
-      <div>
-        <label className="text-xs font-medium text-stone-500 mb-1 block">දුරකථන අංකය (optional)</label>
-        <input type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="07X XXX XXXX" className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm text-stone-700" />
-      </div>
-
-      <div>
-        <label className="text-xs font-medium text-stone-500 mb-1 block">සටහන් (optional)</label>
-        <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm text-stone-700" />
-      </div>
-
-      {error && (
-        <div className="flex items-center gap-2 text-rose-600 text-sm bg-rose-50 border border-rose-200 rounded-xl px-3 py-2">
-          <AlertTriangle size={16} /> {error}
-        </div>
-      )}
-
-      <button onClick={handleSubmit} className="w-full bg-teal-800 text-white rounded-2xl py-3.5 font-semibold active:bg-teal-900">
-        Booking එකතු කරන්න
-      </button>
-    </div>
-  );
-}
-
-function CalendarView({ config, bookings, onDelete }) {
-  const today = todayISO();
-  const now = new Date();
-  const [monthOffset, setMonthOffset] = useState(0);
-  const [selectedDate, setSelectedDate] = useState(today);
-  const [confirmId, setConfirmId] = useState(null);
-
-  const base = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
-  const year = base.getFullYear();
-  const monthIndex = base.getMonth();
-  const numDays = daysInMonth(year, monthIndex);
-  const firstWeekday = new Date(year, monthIndex, 1).getDay();
-
-  const rooms = useMemo(() => getAllRooms(config), [config]);
-  const totalRooms = rooms.length;
-
-  const availabilityFor = useCallback((dateStr) => {
-    const touched = rooms.filter(r => bookings.some(b => b.roomId === r.id && bookingTouchesDate(b, dateStr))).length;
-    return totalRooms - touched;
-  }, [rooms, bookings, totalRooms]);
-
-  const cells = [];
-  for (let i = 0; i < firstWeekday; i++) cells.push(null);
-  for (let d = 1; d <= numDays; d++) cells.push(`${year}-${pad2(monthIndex + 1)}-${pad2(d)}`);
-
-  const [selDayStart, selDayEnd] = daySlotWindow(selectedDate);
-  const [selNightStart, selNightEnd] = nightSlotWindow(selectedDate);
-
-  const selectedBookings = useMemo(() =>
-    bookings.filter(b => bookingTouchesDate(b, selectedDate)).sort((a, b) => a.checkIn.localeCompare(b.checkIn)),
-    [bookings, selectedDate]
-  );
-
-  const ratioColor = (free) => {
-    if (totalRooms === 0) return 'bg-stone-100 text-stone-400';
-    if (free === 0) return 'bg-rose-100 text-rose-700';
-    if (free / totalRooms < 0.34) return 'bg-amber-100 text-amber-700';
-    return 'bg-emerald-100 text-emerald-700';
-  };
-
-  return (
-    <div className="pt-4 pb-4 space-y-4">
-      <div className="flex items-center justify-between">
-        <button onClick={() => setMonthOffset(m => m - 1)} className="p-2 rounded-full bg-white border border-stone-200"><ChevronLeft size={18} className="text-stone-600" /></button>
-        <p className="font-semibold text-stone-800" style={{ fontFamily: "'Manrope',sans-serif" }}>{SI_MONTHS[monthIndex]} {year}</p>
-        <button onClick={() => setMonthOffset(m => m + 1)} className="p-2 rounded-full bg-white border border-stone-200"><ChevronRight size={18} className="text-stone-600" /></button>
-      </div>
-
-      <p className="text-[11px] text-stone-400 -mt-2">අංකය = සම්පූර්ණයෙන් හිස් කාමර ගණන</p>
-
-      <div className="grid grid-cols-7 gap-1.5 text-center">
-        {SI_WEEKDAYS.map(w => <div key={w} className="text-[10px] text-stone-400 font-medium pb-1">{w}</div>)}
-        {cells.map((dateStr, idx) => {
-          if (!dateStr) return <div key={idx} />;
-          const free = availabilityFor(dateStr);
-          const isToday = dateStr === today;
-          const isSelected = dateStr === selectedDate;
-          const dayNum = parseInt(dateStr.split('-')[2], 10);
-          return (
-            <button
-              key={dateStr}
-              onClick={() => setSelectedDate(dateStr)}
-              className={`aspect-square rounded-lg flex flex-col items-center justify-center text-xs ${ratioColor(free)} ${isSelected ? 'ring-2 ring-teal-700' : ''} ${isToday ? 'font-bold' : ''}`}
-            >
-              <span>{dayNum}</span>
-              <span className="text-[9px] opacity-70">{free}</span>
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="flex items-center gap-3 text-[10px] text-stone-500">
-        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-emerald-200" />ගොඩක් හිස්</span>
-        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-amber-200" />ටිකයි</span>
-        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-rose-200" />Full</span>
-      </div>
-
-      <div className="bg-white rounded-2xl border border-stone-200 p-4">
-        <p className="text-sm font-semibold text-stone-700 mb-3">{formatSiDate(selectedDate)}</p>
-        <div className="grid grid-cols-2 gap-2 mb-4">
-          {TYPE_ORDER.map(t => {
-            const meta = TYPE_META[t];
-            const typeRooms = rooms.filter(r => r.type === t);
-            const dFree = typeRooms.filter(r => !bookings.some(b => b.roomId === r.id && rangesOverlap(selDayStart, selDayEnd, b.checkIn, b.checkOut))).length;
-            const nFree = typeRooms.filter(r => !bookings.some(b => b.roomId === r.id && rangesOverlap(selNightStart, selNightEnd, b.checkIn, b.checkOut))).length;
-            return (
-              <div key={t} className="text-xs">
-                <span className={`font-medium ${meta.text}`}>{meta.label}</span>
-                <p className="text-stone-500">Day {dFree}/{typeRooms.length} · Night {nFree}/{typeRooms.length}</p>
-              </div>
-            );
-          })}
-        </div>
-        {selectedBookings.length === 0 ? (
-          <p className="text-sm text-stone-400">මේ දවසේ booking නෑ</p>
-        ) : (
-          <div className="space-y-2">
-            {selectedBookings.map(b => (
-              <div key={b.id} className="flex items-center justify-between text-sm border-t border-stone-100 pt-2 first:border-0 first:pt-0">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <p className="text-stone-700 font-medium">{b.roomLabel}</p>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${BOOKING_TYPES[b.bookingType]?.badge}`}>{BOOKING_TYPES[b.bookingType]?.short}</span>
-                  </div>
-                  <p className="text-stone-400 text-xs">{b.guestName} · {formatSiDateTime(b.checkIn)} → {formatSiDateTime(b.checkOut)}</p>
-                </div>
-                {confirmId === b.id ? (
-                  <div className="flex gap-1 shrink-0">
-                    <button onClick={() => { onDelete(b.id); setConfirmId(null); }} className="p-1.5 bg-rose-600 text-white rounded-lg"><Check size={14} /></button>
-                    <button onClick={() => setConfirmId(null)} className="p-1.5 bg-stone-200 text-stone-600 rounded-lg"><X size={14} /></button>
-                  </div>
-                ) : (
-                  <button onClick={() => setConfirmId(b.id)} className="p-1.5 text-stone-400 shrink-0"><Trash2 size={15} /></button>
+              <div className="text-right">
+                <p className="text-sm font-bold text-emerald-700">Rs. {Number(b.price).toLocaleString()}</p>
+                {b.status === 'arrived' && (
+                  <span className="inline-block mt-1 text-[11px] px-2 py-0.5 rounded-full font-semibold bg-emerald-100 text-emerald-800">
+                    පැමිණියා
+                  </span>
+                )}
+                {b.status === 'not_arrived' && (
+                  <span className="inline-block mt-1 text-[11px] px-2 py-0.5 rounded-full font-semibold bg-rose-100 text-rose-800">
+                    නොපැමිණි
+                  </span>
                 )}
               </div>
-            ))}
+            </div>
+
+            {isAdmin && !isDecided && (
+              <div className="flex gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => selectAttendanceOnce(b.id, 'arrived')}
+                  className="flex-1 py-1.5 rounded-lg text-xs font-semibold border bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 flex items-center justify-center gap-1"
+                >
+                  <i className="fa-solid fa-check"></i> පැමිණියා
+                </button>
+                <button
+                  type="button"
+                  onClick={() => selectAttendanceOnce(b.id, 'not_arrived')}
+                  className="flex-1 py-1.5 rounded-lg text-xs font-semibold border bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100 flex items-center justify-center gap-1"
+                >
+                  <i className="fa-solid fa-xmark"></i> නොපැමිණි
+                </button>
+              </div>
+            )}
+
+            {isAdmin && (
+              <div className="flex items-center justify-end gap-2 pt-1.5 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setEditingBooking({ ...b })}
+                  className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 flex items-center gap-1"
+                >
+                  <i className="fa-solid fa-pen"></i> Edit
+                </button>
+                {showDelete && (
+                  <button
+                    type="button"
+                    onClick={() => deleteBooking(b.id)}
+                    className="text-slate-400 hover:text-rose-600 px-2 py-1 text-xs"
+                    title="Delete"
+                  >
+                    <i className="fa-solid fa-trash"></i>
+                  </button>
+                )}
+              </div>
+            )}
           </div>
-        )}
-      </div>
-    </div>
-  );
-}
+        );
+      };
 
-function BookingsList({ bookings, onDelete }) {
-  const today = todayISO();
-  const [confirmId, setConfirmId] = useState(null);
-  const [filter, setFilter] = useState('upcoming');
+      return (
+        <div className="max-w-md mx-auto bg-white min-h-screen shadow-xl relative pb-20">
+          {/* Header */}
+          <header className="bg-emerald-700 text-white p-4 sticky top-0 z-10 flex justify-between items-center shadow-md">
+            <div>
+              <h1 className="text-lg font-bold">Green Stay Negombo</h1>
+              <p className="text-xs text-emerald-100">කාමර වෙන්කිරීම් කළමනාකරු</p>
+            </div>
+            <button
+              type="button"
+              onClick={handleAdminButtonClick}
+              className={`text-xs px-3 py-1.5 rounded-full border flex items-center gap-1.5 font-semibold transition ${
+                isAdmin
+                  ? 'bg-amber-400 text-slate-900 border-amber-300'
+                  : 'bg-emerald-800 text-emerald-200 border-emerald-600 hover:bg-emerald-900'
+              }`}
+            >
+              <i className={`fa-solid ${isAdmin ? 'fa-lock-open' : 'fa-lock'}`}></i>
+              <span>{isAdmin ? 'Admin' : 'View'}</span>
+            </button>
+          </header>
 
-  const sorted = useMemo(() => {
-    const boundary = `${today}T00:00`;
-    let list = [...bookings];
-    if (filter === 'upcoming') list = list.filter(b => b.checkOut >= boundary);
-    if (filter === 'past') list = list.filter(b => b.checkOut < boundary);
-    return list.sort((a, b) => a.checkIn.localeCompare(b.checkIn));
-  }, [bookings, filter, today]);
-
-  return (
-    <div className="pt-4 pb-4 space-y-3">
-      <div className="flex gap-2">
-        {[['upcoming', 'එන'], ['past', 'ගිය'], ['all', 'සියල්ල']].map(([key, label]) => (
-          <button key={key} onClick={() => setFilter(key)} className={`px-3 py-1.5 rounded-full text-xs font-medium ${filter === key ? 'bg-teal-800 text-white' : 'bg-white border border-stone-200 text-stone-600'}`}>{label}</button>
-        ))}
-      </div>
-
-      {sorted.length === 0 ? (
-        <p className="text-sm text-stone-400 text-center py-10">Booking නෑ</p>
-      ) : (
-        <div className="space-y-2">
-          {sorted.map(b => {
-            const meta = TYPE_META[b.roomType] || TYPE_META.double;
-            return (
-              <div key={b.id} className="bg-white rounded-2xl border border-stone-200 p-4">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${meta.bgSoft} ${meta.text}`}>{b.roomLabel}</span>
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${BOOKING_TYPES[b.bookingType]?.badge}`}>{BOOKING_TYPES[b.bookingType]?.short}</span>
-                    </div>
-                    <p className="text-stone-800 font-medium mt-1.5">{b.guestName}</p>
-                    {b.phone && <p className="text-stone-400 text-xs">{b.phone}</p>}
-                    <p className="text-stone-500 text-xs mt-1">{formatSiDateTime(b.checkIn)} → {formatSiDateTime(b.checkOut)}</p>
-                    {b.notes && <p className="text-stone-400 text-xs mt-1 italic">{b.notes}</p>}
+          {/* Content Body */}
+          <main className="p-4">
+            {/* 1. DASHBOARD TAB */}
+            {tab === 'dashboard' && (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-xl text-center">
+                    <i className="fa-solid fa-sun text-emerald-600 text-xl mb-1"></i>
+                    <p className="text-xs text-slate-600">අද Day Out</p>
+                    <p className="text-2xl font-bold text-slate-800 mt-1">{todayDayOut} / {totalRoomsCapacity}</p>
                   </div>
-                  {confirmId === b.id ? (
-                    <div className="flex gap-1 shrink-0">
-                      <button onClick={() => { onDelete(b.id); setConfirmId(null); }} className="p-1.5 bg-rose-600 text-white rounded-lg"><Check size={14} /></button>
-                      <button onClick={() => setConfirmId(null)} className="p-1.5 bg-stone-200 text-stone-600 rounded-lg"><X size={14} /></button>
-                    </div>
+                  <div className="bg-indigo-50 border border-indigo-200 p-4 rounded-xl text-center">
+                    <i className="fa-solid fa-moon text-indigo-600 text-xl mb-1"></i>
+                    <p className="text-xs text-slate-600">අද Night / Stay</p>
+                    <p className="text-2xl font-bold text-slate-800 mt-1">{todayNightOut} / {totalRoomsCapacity}</p>
+                  </div>
+                </div>
+
+                {/* Room Overview */}
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                  <h2 className="text-xs font-bold text-slate-500 uppercase mb-2">කාමර ධාරිතාව (Rooms)</h2>
+                  <div className="grid grid-cols-2 gap-2">
+                    {Object.entries(roomConfig).map(([key, info]) => {
+                      const bookedToday = todayBookings.filter(b => b.roomType === key).length;
+                      return (
+                        <div key={key} className={`p-2.5 rounded-lg border text-xs flex justify-between items-center ${info.soft}`}>
+                          <span className="font-semibold">{info.label}</span>
+                          <span className="font-bold">{bookedToday}/{info.total}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Upcoming Bookings */}
+                <div className="bg-emerald-50/60 border border-emerald-100 rounded-xl p-3.5">
+                  <h2 className="text-sm font-bold text-emerald-900 mb-2.5 flex items-center gap-2">
+                    <i className="fa-solid fa-bell text-emerald-700"></i> ඊළඟ Booking සටහන්
+                  </h2>
+                  {bookings.filter(b => b.date >= today).length === 0 ? (
+                    <p className="text-xs text-slate-500 text-center py-4">ඉදිරි Bookings කිසිවක් නොමැත.</p>
                   ) : (
-                    <button onClick={() => setConfirmId(b.id)} className="p-1.5 text-stone-400 shrink-0"><Trash2 size={15} /></button>
+                    <div className="space-y-2">
+                      {bookings
+                        .filter(b => b.date >= today)
+                        .sort((a, b) => a.date.localeCompare(b.date))
+                        .slice(0, 5)
+                        .map(b => (
+                          <div key={b.id} className="bg-white p-3 rounded-lg border border-slate-100 shadow-sm flex justify-between items-center">
+                            <div>
+                              <p className="text-sm font-bold text-slate-800">{b.guest} <span className="text-xs font-normal text-slate-500">({b.roomType})</span></p>
+                              <p className="text-xs text-slate-500">{b.date} • {renderPackageText(b)}</p>
+                            </div>
+                            <span className="text-xs font-bold text-emerald-700">Rs. {Number(b.price).toLocaleString()}</span>
+                          </div>
+                        ))}
+                    </div>
                   )}
                 </div>
               </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
+            )}
 
-function SettingsView({ config, bookings, onUpdate }) {
-  const [local, setLocal] = useState(config);
-  const [saved, setSaved] = useState(false);
+            {/* 2. CALENDAR TAB */}
+            {tab === 'calendar' && (
+              <div className="space-y-4">
+                <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm">
+                  <div className="flex justify-between items-center mb-3">
+                    <button onClick={() => changeCalMonth(-1)} className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-slate-700">
+                      <i className="fa-solid fa-chevron-left text-xs"></i>
+                    </button>
+                    <h2 className="text-sm font-bold text-slate-800">{calYear} {SI_MONTHS[calMonth]}</h2>
+                    <button onClick={() => changeCalMonth(1)} className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-slate-700">
+                      <i className="fa-solid fa-chevron-right text-xs"></i>
+                    </button>
+                  </div>
 
-  useEffect(() => {
-    setLocal(config);
-  }, [config]);
+                  <div className="grid grid-cols-7 gap-1 text-center mb-1">
+                    {SI_DAYS.map(d => (
+                      <div key={d} className="text-[11px] font-semibold text-slate-400 py-1">{d}</div>
+                    ))}
+                  </div>
 
-  const maxUsed = useMemo(() => {
-    const map = {};
-    TYPE_ORDER.forEach(t => { map[t] = 0; });
-    bookings.forEach(b => { map[b.roomType] = Math.max(map[b.roomType] || 0, b.roomNumber); });
-    return map;
-  }, [bookings]);
+                  <div className="grid grid-cols-7 gap-1">
+                    {calendarDays.map((cell, idx) => {
+                      if (!cell) return <div key={idx} className="h-10"></div>;
+                      const count = bookings.filter(b => bookingCoversDate(b, cell.iso)).length;
+                      const isSelected = selectedCalDate === cell.iso;
+                      const isToday = today === cell.iso;
+                      return (
+                        <button
+                          key={cell.iso}
+                          onClick={() => setSelectedCalDate(cell.iso)}
+                          className={`h-10 rounded-lg flex flex-col items-center justify-center text-xs relative transition ${
+                            isSelected
+                              ? 'bg-emerald-700 text-white font-bold shadow'
+                              : isToday
+                              ? 'bg-emerald-50 text-emerald-800 font-bold border border-emerald-300'
+                              : 'hover:bg-slate-100 text-slate-700'
+                          }`}
+                        >
+                          <span>{cell.day}</span>
+                          {count > 0 && (
+                            <span className={`w-1.5 h-1.5 rounded-full mt-0.5 ${isSelected ? 'bg-amber-300' : 'bg-emerald-600'}`}></span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
 
-  const change = (type, delta) => {
-    setLocal(prev => {
-      const next = Math.max(maxUsed[type] || 0, (prev[type] || 0) + delta);
-      return { ...prev, [type]: next };
-    });
-    setSaved(false);
-  };
+                {/* Selected Date Bookings */}
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5">
+                  <div className="flex justify-between items-center mb-3">
+                    <h3 className="text-sm font-bold text-slate-800">
+                      <i className="fa-regular fa-calendar-check text-emerald-700 mr-1.5"></i>
+                      {selectedCalDate} Bookings ({selectedDateBookings.length})
+                    </h3>
+                  </div>
 
-  const handleSave = () => {
-    onUpdate(local);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  };
-
-  return (
-    <div className="pt-4 pb-4 space-y-4">
-      <p className="text-sm text-stone-500">කාමර ගණන් වෙනස් කරන්න</p>
-      {TYPE_ORDER.map(t => {
-        const meta = TYPE_META[t];
-        const Icon = meta.icon;
-        return (
-          <div key={t} className="bg-white rounded-2xl border border-stone-200 p-4 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Icon className={meta.text} size={20} />
-              <div>
-                <p className="text-sm font-medium text-stone-700">{meta.label}</p>
-                {maxUsed[t] > 0 && <p className="text-[11px] text-stone-400">Room {maxUsed[t]} වෙනකම් booking ඇත</p>}
+                  {selectedDateBookings.length === 0 ? (
+                    <p className="text-xs text-slate-500 text-center py-6">මෙම දිනයට Bookings කිසිවක් නොමැත.</p>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {selectedDateBookings.map(b => renderBookingCard(b, true))}
+                    </div>
+                  )}
+                </div>
               </div>
+            )}
+
+            {/* 3. ADD BOOKING TAB (ADMIN ONLY) */}
+            {tab === 'add' && isAdmin && (
+              <form onSubmit={handleAddBooking} className="space-y-3.5 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+                <h2 className="text-base font-bold text-slate-800 border-b pb-2">අලුත් Booking එකක්</h2>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Guest Name</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="අමුත්තාගේ නම"
+                    value={formData.guest}
+                    onChange={e => setFormData({ ...formData, guest: e.target.value })}
+                    className="w-full p-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-emerald-600"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Price (Rs.)</label>
+                  <input
+                    type="number"
+                    required
+                    min="0"
+                    placeholder="මුදල (උදා: 15000)"
+                    value={formData.price}
+                    onChange={e => setFormData({ ...formData, price: e.target.value })}
+                    className="w-full p-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-emerald-600"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">කාණ්ඩය (Source)</label>
+                  <select
+                    value={formData.source}
+                    onChange={e => setFormData({ ...formData, source: e.target.value })}
+                    className="w-full p-2.5 text-sm border border-slate-300 rounded-lg bg-white"
+                  >
+                    {SOURCE_OPTIONS.map(src => (
+                      <option key={src} value={src}>{src}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">සටහන් (Notes)</label>
+                  <textarea
+                    rows="2"
+                    placeholder="විශේෂ සටහන් තිබේ නම් ඇතුළත් කරන්න..."
+                    value={formData.notes}
+                    onChange={e => setFormData({ ...formData, notes: e.target.value })}
+                    className="w-full p-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-emerald-600"
+                  ></textarea>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Room Type</label>
+                    <select
+                      value={formData.roomType}
+                      onChange={e => setFormData({ ...formData, roomType: e.target.value })}
+                      className="w-full p-2.5 text-sm border border-slate-300 rounded-lg bg-white"
+                    >
+                      {roomKeys.map(r => (
+                        <option key={r} value={r}>{roomConfig[r]?.label || r}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">දිනය (Date)</label>
+                    <input
+                      type="date"
+                      required
+                      value={formData.date}
+                      onChange={e => setFormData({ ...formData, date: e.target.value, customCheckInDate: e.target.value })}
+                      className="w-full p-2.5 text-sm border border-slate-300 rounded-lg"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Package</label>
+                  <select
+                    value={formData.type}
+                    onChange={e => setFormData({
+                      ...formData,
+                      type: e.target.value,
+                      customCheckInDate: formData.customCheckInDate || formData.date,
+                      customCheckOutDate: formData.customCheckOutDate || formData.date
+                    })}
+                    className="w-full p-2.5 text-sm border border-slate-300 rounded-lg bg-white"
+                  >
+                    {PACKAGES.map(p => (
+                      <option key={p.id} value={p.id}>{p.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {formData.type === 'Custom Time' && (
+                  <div className="space-y-3 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                    <div>
+                      <p className="text-xs font-bold text-slate-700 mb-1.5">Check-in දිනය සහ වේලාව</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          type="date"
+                          value={formData.customCheckInDate}
+                          onChange={e => setFormData({ ...formData, customCheckInDate: e.target.value, date: e.target.value })}
+                          className="w-full p-2 text-xs border border-slate-300 rounded-lg bg-white"
+                        />
+                        <input
+                          type="time"
+                          value={formData.customCheckInTime}
+                          onChange={e => setFormData({ ...formData, customCheckInTime: e.target.value })}
+                          className="w-full p-2 text-xs border border-slate-300 rounded-lg bg-white"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-slate-700 mb-1.5">Check-out දිනය සහ වේලාව</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          type="date"
+                          value={formData.customCheckOutDate}
+                          onChange={e => setFormData({ ...formData, customCheckOutDate: e.target.value })}
+                          className="w-full p-2 text-xs border border-slate-300 rounded-lg bg-white"
+                        />
+                        <input
+                          type="time"
+                          value={formData.customCheckOutTime}
+                          onChange={e => setFormData({ ...formData, customCheckOutTime: e.target.value })}
+                          className="w-full p-2 text-xs border border-slate-300 rounded-lg bg-white"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  className="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-3 rounded-xl shadow transition text-sm"
+                >
+                  <i className="fa-solid fa-plus mr-1.5"></i> Booking එක Save කරන්න
+                </button>
+              </form>
+            )}
+
+            {/* 4. BOOKINGS LIST TAB (ADMIN ONLY) */}
+            {tab === 'bookings' && isAdmin && (
+              <div className="space-y-3.5">
+                {/* Month Selector */}
+                <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-600">මාසය තෝරන්න:</span>
+                  <input
+                    type="month"
+                    value={bookingFilterMonth}
+                    onChange={e => setBookingFilterMonth(e.target.value)}
+                    className="text-xs font-bold border border-slate-300 rounded-lg px-2.5 py-1.5 text-slate-800"
+                  />
+                </div>
+
+                {/* Overall Monthly Summary Cards */}
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="bg-emerald-50 border border-emerald-200 p-2.5 rounded-xl text-center">
+                    <p className="text-[11px] font-semibold text-emerald-800">පැමිණි ({bookingStats.arrivedCount})</p>
+                    <p className="text-xs font-bold text-emerald-900 mt-1">Rs. {bookingStats.arrivedTotal.toLocaleString()}</p>
+                  </div>
+                  <div className="bg-rose-50 border border-rose-200 p-2.5 rounded-xl text-center">
+                    <p className="text-[11px] font-semibold text-rose-800">නොපැමිණි ({bookingStats.notArrivedCount})</p>
+                    <p className="text-xs font-bold text-rose-900 mt-1">Rs. {bookingStats.notArrivedTotal.toLocaleString()}</p>
+                  </div>
+                  <div className="bg-slate-800 text-white p-2.5 rounded-xl text-center">
+                    <p className="text-[11px] text-slate-300">මුළු එකතුව ({monthlyBookings.length})</p>
+                    <p className="text-xs font-bold text-amber-300 mt-1">Rs. {bookingStats.allTotal.toLocaleString()}</p>
+                  </div>
+                </div>
+
+                {/* Separate Totals for Nirmal / Travel Corner / වෙනත් */}
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
+                  <h3 className="text-xs font-bold text-slate-600">කාණ්ඩ අනුව එකතුව (පැමිණි / නොපැමිණි)</h3>
+                  <div className="grid grid-cols-1 gap-2">
+                    {SOURCE_OPTIONS.map(src => {
+                      const s = bookingStats.bySource[src] || { arrivedSrcTotal: 0, notArrivedSrcTotal: 0 };
+                      return (
+                        <div key={src} className="bg-white p-2.5 rounded-lg border border-slate-200 flex justify-between items-center text-xs">
+                          <span className="font-bold text-slate-800">{src}</span>
+                          <div className="flex gap-3">
+                            <span className="font-semibold text-emerald-700">පැමිණි: Rs. {s.arrivedSrcTotal.toLocaleString()}</span>
+                            <span className="font-semibold text-rose-700">නොපැමිණි: Rs. {s.notArrivedSrcTotal.toLocaleString()}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Bookings List for Selected Month */}
+                <div className="space-y-2.5">
+                  <h3 className="text-xs font-bold text-slate-500 uppercase">
+                    {formatMonthLabel(bookingFilterMonth)} Bookings
+                  </h3>
+
+                  {monthlyBookings.length === 0 ? (
+                    <div className="bg-white p-6 rounded-xl border border-slate-200 text-center text-xs text-slate-500">
+                      මෙම මාසය සඳහා Bookings නොමැත.
+                    </div>
+                  ) : (
+                    monthlyBookings.map(b => renderBookingCard(b, true))
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* 5. EXPENSES TAB (ADMIN ONLY) */}
+            {tab === 'expenses' && isAdmin && (
+              <div className="space-y-4">
+                {/* Add Expense Form */}
+                <form onSubmit={handleAddExpense} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-3">
+                  <h2 className="text-sm font-bold text-slate-800 border-b pb-2">වියදමක් එකතු කරන්න (Add Expense)</h2>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">වියදම් විස්තරය</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="උදා: Lunch / Electricity / Cleaning"
+                      value={expForm.title}
+                      onChange={e => setExpForm({ ...expForm, title: e.target.value })}
+                      className="w-full p-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-emerald-600"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">මුදල (Rs.)</label>
+                      <input
+                        type="number"
+                        required
+                        min="0"
+                        placeholder="උදා: 3500"
+                        value={expForm.amount}
+                        onChange={e => setExpForm({ ...expForm, amount: e.target.value })}
+                        className="w-full p-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-emerald-600"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">දිනය</label>
+                      <input
+                        type="date"
+                        required
+                        value={expForm.date}
+                        onChange={e => setExpForm({ ...expForm, date: e.target.value })}
+                        className="w-full p-2.5 text-sm border border-slate-300 rounded-lg"
+                      />
+                    </div>
+                  </div>
+                  <button
+                    type="submit"
+                    className="w-full bg-rose-600 hover:bg-rose-700 text-white font-bold py-2.5 rounded-xl text-sm shadow transition"
+                  >
+                    <i className="fa-solid fa-plus mr-1.5"></i> වියදම එකතු කරන්න
+                  </button>
+                </form>
+
+                {/* Monthly Filter & Total Expenses */}
+                <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-600">මාසය තෝරන්න:</span>
+                  <input
+                    type="month"
+                    value={expenseFilterMonth}
+                    onChange={e => setExpenseFilterMonth(e.target.value)}
+                    className="text-xs font-bold border border-slate-300 rounded-lg px-2.5 py-1.5 text-slate-800"
+                  />
+                </div>
+
+                <div className="bg-rose-50 border border-rose-200 p-4 rounded-xl flex justify-between items-center">
+                  <div>
+                    <p className="text-xs font-semibold text-rose-800">{formatMonthLabel(expenseFilterMonth)} මුළු වියදම්</p>
+                    <p className="text-[11px] text-rose-600">Total Expenses ({monthlyExpenses.length} items)</p>
+                  </div>
+                  <p className="text-lg font-bold text-rose-900">Rs. {monthlyExpenseTotal.toLocaleString()}</p>
+                </div>
+
+                {/* Expenses Itemized List */}
+                <div className="space-y-2">
+                  {monthlyExpenses.length === 0 ? (
+                    <div className="bg-white p-6 rounded-xl border border-slate-200 text-center text-xs text-slate-500">
+                      මෙම මාසය සඳහා වියදම් සටහන් නොමැත.
+                    </div>
+                  ) : (
+                    monthlyExpenses.map(ex => (
+                      <div key={ex.id} className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex justify-between items-center">
+                        <div>
+                          <p className="text-sm font-bold text-slate-800">{ex.title}</p>
+                          <p className="text-xs text-slate-500">{ex.date}</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-bold text-rose-700 mr-1">Rs. {Number(ex.amount).toLocaleString()}</span>
+                          <button
+                            type="button"
+                            onClick={() => setEditingExpense({ ...ex })}
+                            className="px-2 py-1 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 flex items-center gap-1"
+                            title="Edit"
+                          >
+                            <i className="fa-solid fa-pen"></i> Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => deleteExpense(ex.id)}
+                            className="text-slate-400 hover:text-rose-600 px-1.5 py-1 text-xs"
+                            title="Delete"
+                          >
+                            <i className="fa-solid fa-trash"></i>
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* 6. ROOMS SETTINGS TAB (ADMIN ONLY) */}
+            {tab === 'rooms' && isAdmin && (
+              <div className="space-y-4">
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-3">
+                  <h2 className="text-sm font-bold text-slate-800 border-b pb-2">කාමර ප්‍රමාණයන් වෙනස් කරන්න</h2>
+                  <div className="space-y-2">
+                    {Object.entries(roomConfig).map(([key, info]) => (
+                      <div key={key} className="flex items-center justify-between bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+                        <div>
+                          <p className="text-sm font-bold text-slate-800">{info.label}</p>
+                          <p className="text-xs text-slate-500">ප්‍රමාණය: {info.total}</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => adjustRoomCount(key, -1)}
+                            className="w-8 h-8 rounded-lg bg-white border border-slate-300 text-slate-700 font-bold flex items-center justify-center hover:bg-slate-100"
+                          >
+                            -
+                          </button>
+                          <span className="w-6 text-center text-sm font-bold">{info.total}</span>
+                          <button
+                            type="button"
+                            onClick={() => adjustRoomCount(key, 1)}
+                            className="w-8 h-8 rounded-lg bg-emerald-700 text-white font-bold flex items-center justify-center hover:bg-emerald-800"
+                          >
+                            +
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <form onSubmit={handleAddRoomType} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-3">
+                  <h2 className="text-sm font-bold text-slate-800 border-b pb-2">අලුත් Room වර්ගයක් Add කරන්න</h2>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="col-span-2">
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">Room වර්ගයේ නම</label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="උදා: Deluxe Room"
+                        value={newRoomName}
+                        onChange={e => setNewRoomName(e.target.value)}
+                        className="w-full p-2 text-sm border border-slate-300 rounded-lg"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">ගණන</label>
+                      <input
+                        type="number"
+                        required
+                        min="0"
+                        value={newRoomTotal}
+                        onChange={e => setNewRoomTotal(e.target.value)}
+                        className="w-full p-2 text-sm border border-slate-300 rounded-lg"
+                      />
+                    </div>
+                  </div>
+                  <button
+                    type="submit"
+                    className="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-2.5 rounded-xl text-sm shadow transition"
+                  >
+                    <i className="fa-solid fa-plus mr-1.5"></i> Room වර්ගය Add කරන්න
+                  </button>
+                </form>
+              </div>
+            )}
+          </main>
+
+          {/* Admin PIN Modal */}
+          {showPinModal && (
+            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+              <form onSubmit={handleVerifyPin} className="bg-white w-full max-w-xs rounded-2xl p-4 space-y-3 shadow-2xl">
+                <div className="flex justify-between items-center border-b pb-2">
+                  <h3 className="text-sm font-bold text-slate-800">Admin PIN ඇතුළත් කරන්න</h3>
+                  <button type="button" onClick={() => setShowPinModal(false)} className="text-slate-400 hover:text-slate-700">
+                    <i className="fa-solid fa-xmark"></i>
+                  </button>
+                </div>
+                <div>
+                  <input
+                    type="password"
+                    required
+                    autoFocus
+                    placeholder="PIN"
+                    value={pinInput}
+                    onChange={e => setPinInput(e.target.value)}
+                    className="w-full p-2.5 text-sm border border-slate-300 rounded-lg"
+                  />
+                  {pinError && <p className="text-xs text-rose-600 mt-1">{pinError}</p>}
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowPinModal(false)}
+                    className="flex-1 py-2 rounded-xl border border-slate-300 text-xs font-semibold text-slate-700"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 py-2 rounded-xl bg-emerald-700 text-white text-xs font-bold"
+                  >
+                    Unlock
+                  </button>
+                </div>
+              </form>
             </div>
-            <div className="flex items-center gap-3">
-              <button onClick={() => change(t, -1)} disabled={local[t] <= (maxUsed[t] || 0)} className="w-8 h-8 rounded-full bg-stone-100 flex items-center justify-center disabled:opacity-30"><Minus size={14} /></button>
-              <span className="w-5 text-center font-semibold text-stone-700">{local[t]}</span>
-              <button onClick={() => change(t, 1)} className="w-8 h-8 rounded-full bg-stone-100 flex items-center justify-center"><Plus size={14} /></button>
+          )}
+
+          {/* Edit Booking Modal */}
+          {editingBooking && isAdmin && (
+            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+              <form onSubmit={handleSaveEdit} className="bg-white w-full max-w-md rounded-2xl p-4 space-y-3 shadow-2xl max-h-[90vh] overflow-y-auto">
+                <div className="flex justify-between items-center border-b pb-2">
+                  <h3 className="text-sm font-bold text-slate-800">Booking Edit කරන්න</h3>
+                  <button type="button" onClick={() => setEditingBooking(null)} className="text-slate-400 hover:text-slate-700">
+                    <i className="fa-solid fa-xmark text-base"></i>
+                  </button>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Guest Name</label>
+                  <input
+                    type="text"
+                    required
+                    value={editingBooking.guest}
+                    onChange={e => setEditingBooking({ ...editingBooking, guest: e.target.value })}
+                    className="w-full p-2 text-sm border border-slate-300 rounded-lg"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Price (Rs.)</label>
+                  <input
+                    type="number"
+                    required
+                    min="0"
+                    value={editingBooking.price}
+                    onChange={e => setEditingBooking({ ...editingBooking, price: e.target.value })}
+                    className="w-full p-2 text-sm border border-slate-300 rounded-lg"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">කාණ්ඩය (Source)</label>
+                  <select
+                    value={editingBooking.source || 'Nirmal'}
+                    onChange={e => setEditingBooking({ ...editingBooking, source: e.target.value })}
+                    className="w-full p-2 text-sm border border-slate-300 rounded-lg bg-white"
+                  >
+                    {SOURCE_OPTIONS.map(src => (
+                      <option key={src} value={src}>{src}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">සටහන් (Notes)</label>
+                  <textarea
+                    rows="2"
+                    value={editingBooking.notes || ''}
+                    onChange={e => setEditingBooking({ ...editingBooking, notes: e.target.value })}
+                    className="w-full p-2 text-sm border border-slate-300 rounded-lg"
+                  ></textarea>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Room Type</label>
+                    <select
+                      value={editingBooking.roomType}
+                      onChange={e => setEditingBooking({ ...editingBooking, roomType: e.target.value })}
+                      className="w-full p-2 text-sm border border-slate-300 rounded-lg bg-white"
+                    >
+                      {roomKeys.map(r => (
+                        <option key={r} value={r}>{roomConfig[r]?.label || r}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">දිනය (Date)</label>
+                    <input
+                      type="date"
+                      required
+                      value={editingBooking.date}
+                      onChange={e => setEditingBooking({ ...editingBooking, date: e.target.value, customCheckInDate: e.target.value })}
+                      className="w-full p-2 text-sm border border-slate-300 rounded-lg"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Package</label>
+                  <select
+                    value={editingBooking.type}
+                    onChange={e => setEditingBooking({
+                      ...editingBooking,
+                      type: e.target.value,
+                      customCheckInDate: editingBooking.customCheckInDate || editingBooking.date,
+                      customCheckOutDate: editingBooking.customCheckOutDate || editingBooking.date
+                    })}
+                    className="w-full p-2 text-sm border border-slate-300 rounded-lg bg-white"
+                  >
+                    {PACKAGES.map(p => (
+                      <option key={p.id} value={p.id}>{p.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {editingBooking.type === 'Custom Time' && (
+                  <div className="space-y-2.5 bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+                    <div>
+                      <p className="text-xs font-bold text-slate-700 mb-1">Check-in දිනය සහ වේලාව</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          type="date"
+                          value={editingBooking.customCheckInDate || editingBooking.date || ''}
+                          onChange={e => setEditingBooking({ ...editingBooking, customCheckInDate: e.target.value, date: e.target.value })}
+                          className="w-full p-2 text-xs border border-slate-300 rounded-lg bg-white"
+                        />
+                        <input
+                          type="time"
+                          value={editingBooking.customCheckInTime || ''}
+                          onChange={e => setEditingBooking({ ...editingBooking, customCheckInTime: e.target.value })}
+                          className="w-full p-2 text-xs border border-slate-300 rounded-lg bg-white"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-slate-700 mb-1">Check-out දිනය සහ වේලාව</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          type="date"
+                          value={editingBooking.customCheckOutDate || editingBooking.customCheckInDate || editingBooking.date || ''}
+                          onChange={e => setEditingBooking({ ...editingBooking, customCheckOutDate: e.target.value })}
+                          className="w-full p-2 text-xs border border-slate-300 rounded-lg bg-white"
+                        />
+                        <input
+                          type="time"
+                          value={editingBooking.customCheckOutTime || ''}
+                          onChange={e => setEditingBooking({ ...editingBooking, customCheckOutTime: e.target.value })}
+                          className="w-full p-2 text-xs border border-slate-300 rounded-lg bg-white"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditingBooking(null)}
+                    className="flex-1 py-2 rounded-xl border border-slate-300 text-xs font-semibold text-slate-700"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 py-2 rounded-xl bg-emerald-700 text-white text-xs font-bold"
+                  >
+                    Save Changes
+                  </button>
+                </div>
+              </form>
             </div>
-          </div>
-        );
-      })}
-      <button onClick={handleSave} className="w-full bg-teal-800 text-white rounded-2xl py-3.5 font-semibold active:bg-teal-900">
-        {saved ? 'Save කළා ✓' : 'Save කරන්න'}
-      </button>
-    </div>
-  );
-}
+          )}
 
-export default function App() {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [config, setConfig] = useState(DEFAULT_CONFIG);
-  const [bookings, setBookings] = useState([]);
-  const [activeTab, setActiveTab] = useState('dashboard');
-  const [toast, setToast] = useState(null);
+          {/* Edit Expense Modal */}
+          {editingExpense && isAdmin && (
+            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+              <form onSubmit={handleSaveExpenseEdit} className="bg-white w-full max-w-md rounded-2xl p-4 space-y-3 shadow-2xl">
+                <div className="flex justify-between items-center border-b pb-2">
+                  <h3 className="text-sm font-bold text-slate-800">වියදම Edit කරන්න</h3>
+                  <button type="button" onClick={() => setEditingExpense(null)} className="text-slate-400 hover:text-slate-700">
+                    <i className="fa-solid fa-xmark text-base"></i>
+                  </button>
+                </div>
 
-  // Authentication Setup
-  useEffect(() => {
-    const initAuth = async () => {
-      try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
-        }
-      } catch (err) {
-        console.error("Auth Failed", err);
-      }
-    };
-    initAuth();
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">වියදම් විස්තරය</label>
+                  <input
+                    type="text"
+                    required
+                    value={editingExpense.title}
+                    onChange={e => setEditingExpense({ ...editingExpense, title: e.target.value })}
+                    className="w-full p-2 text-sm border border-slate-300 rounded-lg"
+                  />
+                </div>
 
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-    });
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">මුදල (Rs.)</label>
+                    <input
+                      type="number"
+                      required
+                      min="0"
+                      value={editingExpense.amount}
+                      onChange={e => setEditingExpense({ ...editingExpense, amount: e.target.value })}
+                      className="w-full p-2 text-sm border border-slate-300 rounded-lg"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">දිනය</label>
+                    <input
+                      type="date"
+                      required
+                      value={editingExpense.date}
+                      onChange={e => setEditingExpense({ ...editingExpense, date: e.target.value })}
+                      className="w-full p-2 text-sm border border-slate-300 rounded-lg"
+                    />
+                  </div>
+                </div>
 
-    return () => unsubscribe();
-  }, []);
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditingExpense(null)}
+                    className="flex-1 py-2 rounded-xl border border-slate-300 text-xs font-semibold text-slate-700"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 py-2 rounded-xl bg-rose-600 text-white text-xs font-bold"
+                  >
+                    Save Changes
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
 
-  // Real-time Cloud Data Synchronization (Firestore)
-  useEffect(() => {
-    if (!user) return;
-
-    // Public collection path for shared bookings
-    const configDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'app_config', 'config');
-    const bookingsColRef = collection(db, 'artifacts', appId, 'public', 'data', 'bookings');
-
-    // Subscribe to Config changes
-    const unsubConfig = onSnapshot(configDocRef, (docSnap) => {
-      if (docSnap.exists()) {
-        setConfig(docSnap.data());
-      } else {
-        // Initialize config document if it doesn't exist
-        setDoc(configDocRef, DEFAULT_CONFIG);
-      }
-    }, (error) => console.error("Config fetch error:", error));
-
-    // Subscribe to Bookings changes
-    const unsubBookings = onSnapshot(query(bookingsColRef), (querySnap) => {
-      const loadedBookings = [];
-      querySnap.forEach((doc) => {
-        loadedBookings.push({ id: doc.id, ...doc.data() });
-      });
-      setBookings(loadedBookings);
-      setLoading(false);
-    }, (error) => {
-      console.error("Bookings fetch error:", error);
-      setLoading(false);
-    });
-
-    return () => {
-      unsubConfig();
-      unsubBookings();
-    };
-  }, [user]);
-
-  const showToast = useCallback((text, kind = 'success') => {
-    setToast({ text, kind });
-    setTimeout(() => setToast(null), 2500);
-  }, []);
-
-  // Add Booking to Firebase
-  const addBooking = useCallback(async (booking) => {
-    if (!user) return;
-    setSaving(true);
-    try {
-      const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'bookings', booking.id);
-      await setDoc(docRef, booking);
-    } catch (e) {
-      showToast('Save කරගන්න බැරි වුණා', 'error');
-    } finally {
-      setSaving(false);
-    }
-  }, [user, showToast]);
-
-  // Delete Booking from Firebase
-  const deleteBooking = useCallback(async (id) => {
-    if (!user) return;
-    setSaving(true);
-    try {
-      const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'bookings', id);
-      await deleteDoc(docRef);
-      showToast('Booking එක ඉවත් කළා');
-    } catch (e) {
-      showToast('ඉවත් කිරීමට නොහැකි විය', 'error');
-    } finally {
-      setSaving(false);
-    }
-  }, [user, showToast]);
-
-  // Update Room Configuration in Firebase
-  const updateConfig = useCallback(async (nextConfig) => {
-    if (!user) return;
-    setSaving(true);
-    try {
-      const configDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'app_config', 'config');
-      await setDoc(configDocRef, nextConfig);
-      showToast('සැකසුම් යාවත්කාලීන කළා');
-    } catch (e) {
-      showToast('සැකසුම් Save කරගන්න බැරි වුණා', 'error');
-    } finally {
-      setSaving(false);
-    }
-  }, [user, showToast]);
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-stone-50">
-        <div className="flex flex-col items-center gap-3 text-teal-800">
-          <Loader2 className="animate-spin" size={28} />
-          <p className="text-sm text-stone-500">Cloud Data Connect වෙමින් පවතී...</p>
+          {/* Bottom Navigation Bar */}
+          <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t border-slate-200 flex justify-around py-2 z-20 shadow-lg">
+            <button
+              onClick={() => setTab('dashboard')}
+              className={`flex flex-col items-center text-[11px] px-2 py-1 ${tab === 'dashboard' ? 'text-emerald-700 font-bold' : 'text-slate-500'}`}
+            >
+              <i className="fa-solid fa-house text-base mb-0.5"></i>
+              <span>Home</span>
+            </button>
+            <button
+              onClick={() => setTab('calendar')}
+              className={`flex flex-col items-center text-[11px] px-2 py-1 ${tab === 'calendar' ? 'text-emerald-700 font-bold' : 'text-slate-500'}`}
+            >
+              <i className="fa-solid fa-calendar-days text-base mb-0.5"></i>
+              <span>Calendar</span>
+            </button>
+            {isAdmin && (
+              <>
+                <button
+                  onClick={() => setTab('add')}
+                  className={`flex flex-col items-center text-[11px] px-2 py-1 ${tab === 'add' ? 'text-emerald-700 font-bold' : 'text-slate-500'}`}
+                >
+                  <i className="fa-solid fa-circle-plus text-base mb-0.5"></i>
+                  <span>Add</span>
+                </button>
+                <button
+                  onClick={() => setTab('bookings')}
+                  className={`flex flex-col items-center text-[11px] px-2 py-1 ${tab === 'bookings' ? 'text-emerald-700 font-bold' : 'text-slate-500'}`}
+                >
+                  <i className="fa-solid fa-list-check text-base mb-0.5"></i>
+                  <span>Bookings</span>
+                </button>
+                <button
+                  onClick={() => setTab('expenses')}
+                  className={`flex flex-col items-center text-[11px] px-2 py-1 ${tab === 'expenses' ? 'text-emerald-700 font-bold' : 'text-slate-500'}`}
+                >
+                  <i className="fa-solid fa-receipt text-base mb-0.5"></i>
+                  <span>Expenses</span>
+                </button>
+                <button
+                  onClick={() => setTab('rooms')}
+                  className={`flex flex-col items-center text-[11px] px-2 py-1 ${tab === 'rooms' ? 'text-emerald-700 font-bold' : 'text-slate-500'}`}
+                >
+                  <i className="fa-solid fa-bed text-base mb-0.5"></i>
+                  <span>Rooms</span>
+                </button>
+              </>
+            )}
+          </nav>
         </div>
-      </div>
-    );
-  }
+      );
+    }
 
-  return (
-    <div className="min-h-screen bg-stone-50 flex flex-col" style={{ fontFamily: "'Inter','Noto Sans Sinhala',sans-serif" }}>
-      <FontLoader />
-      <Header saving={saving} />
-      <main className="flex-1 overflow-y-auto pb-24 max-w-2xl w-full mx-auto px-4">
-        {activeTab === 'dashboard' && <Dashboard config={config} bookings={bookings} onNavigate={setActiveTab} />}
-        {activeTab === 'add' && <AddBooking config={config} bookings={bookings} onAdd={addBooking} showToast={showToast} onDone={() => setActiveTab('bookings')} />}
-        {activeTab === 'calendar' && <CalendarView config={config} bookings={bookings} onDelete={deleteBooking} />}
-        {activeTab === 'bookings' && <BookingsList bookings={bookings} onDelete={deleteBooking} />}
-        {activeTab === 'settings' && <SettingsView config={config} bookings={bookings} onUpdate={updateConfig} />}
-      </main>
-      <BottomNav active={activeTab} onChange={setActiveTab} />
-      {toast && <Toast toast={toast} />}
-    </div>
-  );
-}
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
