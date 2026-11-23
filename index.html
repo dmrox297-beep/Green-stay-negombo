@@ -10,9 +10,9 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 
   <!-- React & Babel -->
-  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.development.js" crossorigin></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.25.6/babel.min.js"></script>
 
   <!-- Google Fonts -->
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Sinhala:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -24,9 +24,11 @@
   <div id="root"></div>
 
   <script type="text/babel">
-    const { useState, useEffect, useMemo } = React;
+    const { useState, useEffect, useMemo, useRef } = React;
 
     const ADMIN_PIN = 'N1357';
+    // ඔබේ Firebase Realtime Database URL එක ඇතුළත් කර ඇත
+    const FIREBASE_DB_URL = 'https://green-stay-hotel-negombo-default-rtdb.asia-southeast1.firebasedatabase.app';
 
     const DEFAULT_ROOM_CONFIG = {
       Double: { label: 'Double Room', total: 4, color: 'bg-teal-700', soft: 'bg-teal-50 text-teal-800 border-teal-200' },
@@ -49,7 +51,7 @@
       { id: 'Custom Time', label: 'Custom Time' }
     ];
 
-    const SOURCE_OPTIONS = ['Nirmal', 'Travel Corner', 'වෙනත්'];
+    const SOURCE_OPTIONS = ['Nirmal', 'Nirmal booking.com', 'Travel Corner', 'වෙනත්'];
 
     const SI_MONTHS = ['ජනවාරි', 'පෙබරවාරි', 'මාර්තු', 'අප්‍රේල්', 'මැයි', 'ජූනි', 'ජූලි', 'අගෝස්තු', 'සැප්තැම්බර්', 'ඔක්තෝබර්', 'නොවැම්බර්', 'දෙසැම්බර්'];
     const SI_DAYS = ['ඉරි', 'සඳු', 'අඟ', 'බදා', 'බ්‍රහ', 'සිකු', 'සෙන'];
@@ -70,21 +72,86 @@
       return `${y} ${SI_MONTHS[m - 1]}`;
     }
 
-    function bookingCoversDate(booking, isoDate) {
-      if (!booking || !booking.date || !isoDate) return false;
+    function parseISODateUTC(iso) {
+      const [y, m, d] = iso.split('-').map(Number);
+      return new Date(Date.UTC(y, m - 1, d));
+    }
+
+    function formatISODateUTC(dateObj) {
+      const y = dateObj.getUTCFullYear();
+      const m = String(dateObj.getUTCMonth() + 1).padStart(2, '0');
+      const d = String(dateObj.getUTCDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+
+    function getBookingDateRange(booking) {
+      if (!booking || !booking.date) return { start: '', end: '' };
       const start = booking.type === 'Custom Time' && booking.customCheckInDate ? booking.customCheckInDate : booking.date;
       const end = booking.type === 'Custom Time' && booking.customCheckOutDate ? booking.customCheckOutDate : start;
       const effectiveEnd = end >= start ? end : start;
-      return isoDate >= start && isoDate <= effectiveEnd;
+      return { start, end: effectiveEnd };
+    }
+
+    function getDatesInRange(startISO, endISO) {
+      if (!startISO) return [];
+      const effectiveEnd = endISO && endISO >= startISO ? endISO : startISO;
+      const dates = [];
+      const cur = parseISODateUTC(startISO);
+      const last = parseISODateUTC(effectiveEnd);
+      while (cur <= last) {
+        dates.push(formatISODateUTC(cur));
+        cur.setUTCDate(cur.getUTCDate() + 1);
+      }
+      return dates;
+    }
+
+    function bookingCoversDate(booking, isoDate) {
+      if (!booking || !booking.date || !isoDate) return false;
+      const { start, end } = getBookingDateRange(booking);
+      return isoDate >= start && isoDate <= end;
+    }
+
+    function getBookingRoomCount(booking, roomKey = null) {
+      if (Array.isArray(booking.roomSelections) && booking.roomSelections.length > 0) {
+        if (roomKey) {
+          return booking.roomSelections
+            .filter(item => item.roomType === roomKey)
+            .reduce((sum, item) => sum + (Number(item.qty) || 1), 0);
+        }
+        return booking.roomSelections.reduce((sum, item) => sum + (Number(item.qty) || 1), 0);
+      }
+      const fallbackQty = Number(booking.roomQty) || 1;
+      if (roomKey) {
+        return booking.roomType === roomKey ? fallbackQty : 0;
+      }
+      return fallbackQty;
+    }
+
+    function formatBookingRoomsText(booking) {
+      if (Array.isArray(booking.roomSelections) && booking.roomSelections.length > 0) {
+        return booking.roomSelections
+          .map(item => `${item.roomType} x${Number(item.qty) || 1}`)
+          .join(', ');
+      }
+      const qty = Number(booking.roomQty) || 1;
+      return qty > 1 ? `${booking.roomType} x${qty}` : booking.roomType;
+    }
+
+    function getCleanFirebaseBaseUrl() {
+      if (!FIREBASE_DB_URL || !FIREBASE_DB_URL.trim()) return '';
+      return FIREBASE_DB_URL.trim().replace(/\/+$/, '');
     }
 
     function App() {
-      const [isAdmin, setIsAdmin] = useState(false);
+      const [isAdmin, setIsAdmin] = useState(() => {
+        return localStorage.getItem('gs_admin_logged_in_v1') === 'true';
+      });
       const [showPinModal, setShowPinModal] = useState(false);
       const [pinInput, setPinInput] = useState('');
       const [pinError, setPinError] = useState('');
 
       const [tab, setTab] = useState('dashboard');
+      const [syncStatus, setSyncStatus] = useState(() => getCleanFirebaseBaseUrl() ? 'Syncing' : 'Local');
 
       // Room Config State
       const [roomConfig, setRoomConfig] = useState(() => {
@@ -114,13 +181,14 @@
       const roomKeys = Object.keys(roomConfig);
       const defaultRoomKey = roomKeys[0] || 'Double';
 
-      // Add Booking Form State
+      // Add Booking Form State (supports multiple room types + quantities)
       const [formData, setFormData] = useState({
         guest: '',
         price: '',
+        advance: '',
         source: 'Nirmal',
         notes: '',
-        roomType: defaultRoomKey,
+        roomSelections: [{ roomType: defaultRoomKey, qty: 1 }],
         type: 'Day Out',
         customCheckInDate: todayISO(),
         customCheckInTime: '',
@@ -151,6 +219,13 @@
         date: todayISO()
       });
 
+      const lastRemotePayloadRef = useRef('');
+      const skipNextPushRef = useRef(false);
+
+      useEffect(() => {
+        localStorage.setItem('gs_admin_logged_in_v1', isAdmin ? 'true' : 'false');
+      }, [isAdmin]);
+
       useEffect(() => {
         localStorage.setItem('gs_room_config_v1', JSON.stringify(roomConfig));
       }, [roomConfig]);
@@ -163,12 +238,130 @@
         localStorage.setItem('gs_expenses_v1', JSON.stringify(expenses));
       }, [expenses]);
 
+      // Firebase Realtime Database Sync (Push on local changes + Poll every 3 seconds)
+      useEffect(() => {
+        const baseUrl = getCleanFirebaseBaseUrl();
+        if (!baseUrl) {
+          setSyncStatus('Local');
+          return;
+        }
+
+        let cancelled = false;
+
+        const pullFromFirebase = async () => {
+          try {
+            const res = await fetch(`${baseUrl}/greenStayNegombo.json`);
+            if (!res.ok) throw new Error('Network error');
+            const data = await res.json();
+            if (cancelled) return;
+
+            if (data) {
+              const serialized = JSON.stringify({
+                bookings: data.bookings || [],
+                expenses: data.expenses || [],
+                roomConfig: data.roomConfig || DEFAULT_ROOM_CONFIG
+              });
+              if (serialized !== lastRemotePayloadRef.current) {
+                lastRemotePayloadRef.current = serialized;
+                skipNextPushRef.current = true;
+                if (Array.isArray(data.bookings)) setBookings(data.bookings);
+                if (Array.isArray(data.expenses)) setExpenses(data.expenses);
+                if (data.roomConfig && typeof data.roomConfig === 'object') {
+                  setRoomConfig(data.roomConfig);
+                }
+              }
+            }
+            setSyncStatus('Live');
+          } catch (err) {
+            if (!cancelled) setSyncStatus('Offline');
+          }
+        };
+
+        pullFromFirebase();
+        const intervalId = setInterval(pullFromFirebase, 3000);
+
+        return () => {
+          cancelled = true;
+          clearInterval(intervalId);
+        };
+      }, []);
+
+      useEffect(() => {
+        const baseUrl = getCleanFirebaseBaseUrl();
+        if (!baseUrl) return;
+
+        if (skipNextPushRef.current) {
+          skipNextPushRef.current = false;
+          return;
+        }
+
+        const payload = {
+          bookings,
+          expenses,
+          roomConfig,
+          updatedAt: Date.now()
+        };
+        const comparable = JSON.stringify({
+          bookings,
+          expenses,
+          roomConfig
+        });
+
+        if (comparable === lastRemotePayloadRef.current) return;
+
+        fetch(`${baseUrl}/greenStayNegombo.json`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        })
+          .then(res => {
+            if (res.ok) {
+              lastRemotePayloadRef.current = comparable;
+              setSyncStatus('Live');
+            } else {
+              setSyncStatus('Error');
+            }
+          })
+          .catch(() => setSyncStatus('Offline'));
+      }, [bookings, expenses, roomConfig]);
+
       // If user logs out of Admin while on a restricted tab, go back to dashboard
       useEffect(() => {
         if (!isAdmin && (tab === 'add' || tab === 'bookings' || tab === 'expenses' || tab === 'rooms')) {
           setTab('dashboard');
         }
       }, [isAdmin, tab]);
+
+      // Check for overbooking across all affected dates for a candidate booking
+      const findOverbookingConflict = (candidateBooking, ignoreBookingId = null) => {
+        const { start, end } = getBookingDateRange(candidateBooking);
+        const datesToCheck = getDatesInRange(start, end);
+
+        const requestedByType = {};
+        const selections = Array.isArray(candidateBooking.roomSelections) && candidateBooking.roomSelections.length > 0
+          ? candidateBooking.roomSelections
+          : [{ roomType: candidateBooking.roomType || defaultRoomKey, qty: Number(candidateBooking.roomQty) || 1 }];
+
+        selections.forEach(item => {
+          const rType = item.roomType || defaultRoomKey;
+          const q = Math.max(1, Number(item.qty) || 1);
+          requestedByType[rType] = (requestedByType[rType] || 0) + q;
+        });
+
+        for (const iso of datesToCheck) {
+          const dayBookings = bookings.filter(b => b.id !== ignoreBookingId && bookingCoversDate(b, iso));
+          for (const [rType, reqQty] of Object.entries(requestedByType)) {
+            const maxCapacity = Number(roomConfig[rType]?.total ?? 0);
+            const alreadyBooked = dayBookings.reduce((sum, b) => sum + getBookingRoomCount(b, rType), 0);
+            if (alreadyBooked + reqQty > maxCapacity) {
+              const label = roomConfig[rType]?.label || rType;
+              const availableLeft = Math.max(0, maxCapacity - alreadyBooked);
+              return `${iso} දිනට ${label} සඳහා ඉතිරිව ඇත්තේ ${availableLeft}/${maxCapacity} පමණි. Overbooking කළ නොහැක!`;
+            }
+          }
+        }
+        return null;
+      };
 
       const handleAdminButtonClick = () => {
         if (isAdmin) {
@@ -184,6 +377,7 @@
         e.preventDefault();
         if (pinInput.trim() === ADMIN_PIN) {
           setIsAdmin(true);
+          localStorage.setItem('gs_admin_logged_in_v1', 'true');
           setShowPinModal(false);
           setPinInput('');
           setPinError('');
@@ -227,6 +421,68 @@
         setNewRoomTotal('1');
       };
 
+      // Add Form Room Selection Helpers
+      const updateFormRoomSelection = (index, field, value) => {
+        setFormData(prev => {
+          const updated = [...prev.roomSelections];
+          updated[index] = {
+            ...updated[index],
+            [field]: field === 'qty' ? Math.max(1, Number(value) || 1) : value
+          };
+          return { ...prev, roomSelections: updated };
+        });
+      };
+
+      const addFormRoomRow = () => {
+        setFormData(prev => ({
+          ...prev,
+          roomSelections: [...prev.roomSelections, { roomType: defaultRoomKey, qty: 1 }]
+        }));
+      };
+
+      const removeFormRoomRow = (index) => {
+        setFormData(prev => {
+          if (prev.roomSelections.length <= 1) return prev;
+          return {
+            ...prev,
+            roomSelections: prev.roomSelections.filter((_, idx) => idx !== index)
+          };
+        });
+      };
+
+      // Edit Modal Room Selection Helpers
+      const updateEditRoomSelection = (index, field, value) => {
+        setEditingBooking(prev => {
+          const list = Array.isArray(prev.roomSelections) && prev.roomSelections.length > 0
+            ? [...prev.roomSelections]
+            : [{ roomType: prev.roomType || defaultRoomKey, qty: Number(prev.roomQty) || 1 }];
+          list[index] = {
+            ...list[index],
+            [field]: field === 'qty' ? Math.max(1, Number(value) || 1) : value
+          };
+          return { ...prev, roomSelections: list, roomType: list[0].roomType };
+        });
+      };
+
+      const addEditRoomRow = () => {
+        setEditingBooking(prev => {
+          const list = Array.isArray(prev.roomSelections) && prev.roomSelections.length > 0
+            ? [...prev.roomSelections]
+            : [{ roomType: prev.roomType || defaultRoomKey, qty: Number(prev.roomQty) || 1 }];
+          list.push({ roomType: defaultRoomKey, qty: 1 });
+          return { ...prev, roomSelections: list };
+        });
+      };
+
+      const removeEditRoomRow = (index) => {
+        setEditingBooking(prev => {
+          const list = Array.isArray(prev.roomSelections) ? prev.roomSelections : [];
+          if (list.length <= 1) return prev;
+          const filtered = list.filter((_, idx) => idx !== index);
+          return { ...prev, roomSelections: filtered, roomType: filtered[0].roomType };
+        });
+      };
+
       // Add Booking Handler
       const handleAddBooking = (e) => {
         e.preventDefault();
@@ -236,13 +492,22 @@
         }
         const isCustom = formData.type === 'Custom Time';
         const effectiveDate = isCustom && formData.customCheckInDate ? formData.customCheckInDate : formData.date;
+        const cleanSelections = formData.roomSelections.map(item => ({
+          roomType: item.roomType || defaultRoomKey,
+          qty: Math.max(1, Number(item.qty) || 1)
+        }));
+        const totalQty = cleanSelections.reduce((sum, item) => sum + item.qty, 0);
+
         const newBooking = {
           id: Date.now(),
           guest: formData.guest.trim(),
           price: Number(formData.price),
+          advance: Number(formData.advance) || 0,
           source: formData.source || 'Nirmal',
           notes: formData.notes.trim(),
-          roomType: formData.roomType || defaultRoomKey,
+          roomType: cleanSelections[0]?.roomType || defaultRoomKey,
+          roomQty: totalQty,
+          roomSelections: cleanSelections,
           type: formData.type,
           customCheckInDate: isCustom ? (formData.customCheckInDate || effectiveDate) : '',
           customCheckInTime: isCustom ? formData.customCheckInTime : '',
@@ -251,13 +516,20 @@
           date: effectiveDate,
           status: 'pending'
         };
+
+        const conflictMessage = findOverbookingConflict(newBooking, null);
+        if (conflictMessage) {
+          return alert(conflictMessage);
+        }
+
         setBookings([newBooking, ...bookings]);
         setFormData({
           guest: '',
           price: '',
+          advance: '',
           source: 'Nirmal',
           notes: '',
-          roomType: defaultRoomKey,
+          roomSelections: [{ roomType: defaultRoomKey, qty: 1 }],
           type: 'Day Out',
           customCheckInDate: todayISO(),
           customCheckInTime: '',
@@ -278,28 +550,50 @@
         }
         const isCustom = editingBooking.type === 'Custom Time';
         const effectiveDate = isCustom && editingBooking.customCheckInDate ? editingBooking.customCheckInDate : editingBooking.date;
-        setBookings(bookings.map(b => b.id === editingBooking.id ? {
+        const cleanSelections = Array.isArray(editingBooking.roomSelections) && editingBooking.roomSelections.length > 0
+          ? editingBooking.roomSelections.map(item => ({
+              roomType: item.roomType || defaultRoomKey,
+              qty: Math.max(1, Number(item.qty) || 1)
+            }))
+          : [{ roomType: editingBooking.roomType || defaultRoomKey, qty: Math.max(1, Number(editingBooking.roomQty) || 1) }];
+        const totalQty = cleanSelections.reduce((sum, item) => sum + item.qty, 0);
+
+        const updatedBooking = {
           ...editingBooking,
           guest: editingBooking.guest.trim(),
           price: Number(editingBooking.price),
+          advance: Number(editingBooking.advance) || 0,
           notes: (editingBooking.notes || '').trim(),
+          roomType: cleanSelections[0]?.roomType || defaultRoomKey,
+          roomQty: totalQty,
+          roomSelections: cleanSelections,
           customCheckInDate: isCustom ? (editingBooking.customCheckInDate || effectiveDate) : '',
           customCheckInTime: isCustom ? (editingBooking.customCheckInTime || '') : '',
           customCheckOutDate: isCustom ? (editingBooking.customCheckOutDate || editingBooking.customCheckInDate || effectiveDate) : '',
           customCheckOutTime: isCustom ? (editingBooking.customCheckOutTime || '') : '',
           date: effectiveDate
-        } : b));
+        };
+
+        const conflictMessage = findOverbookingConflict(updatedBooking, editingBooking.id);
+        if (conflictMessage) {
+          return alert(conflictMessage);
+        }
+
+        setBookings(bookings.map(b => b.id === editingBooking.id ? updatedBooking : b));
         setEditingBooking(null);
       };
 
-      // Set Attendance Status once
-      const selectAttendanceOnce = (id, status) => {
+      // Set Attendance Status
+      const selectAttendanceStatus = (id, status) => {
         if (!isAdmin) return;
-        setBookings(bookings.map(b => {
-          if (b.id !== id) return b;
-          if (b.status === 'arrived' || b.status === 'not_arrived') return b;
-          return { ...b, status };
-        }));
+        setBookings(bookings.map(b => (b.id === id ? { ...b, status } : b)));
+      };
+
+      // Toggle Attendance Status when clicking the badge
+      const toggleAttendanceBadge = (id, currentStatus) => {
+        if (!isAdmin) return;
+        const nextStatus = currentStatus === 'arrived' ? 'not_arrived' : 'arrived';
+        setBookings(bookings.map(b => (b.id === id ? { ...b, status: nextStatus } : b)));
       };
 
       // Delete Booking
@@ -364,8 +658,12 @@
       // Today stats for Dashboard
       const today = todayISO();
       const todayBookings = bookings.filter(b => bookingCoversDate(b, today));
-      const todayDayOut = todayBookings.filter(b => b.type === 'Day Out').length;
-      const todayNightOut = todayBookings.filter(b => b.type === 'Night Out' || b.type === '1 Night Standard').length;
+      const todayDayOut = todayBookings
+        .filter(b => b.type === 'Day Out')
+        .reduce((sum, b) => sum + getBookingRoomCount(b), 0);
+      const todayNightOut = todayBookings
+        .filter(b => b.type === 'Night Out' || b.type === '1 Night Standard')
+        .reduce((sum, b) => sum + getBookingRoomCount(b), 0);
 
       // Calendar Grid Calculation
       const calendarDays = useMemo(() => {
@@ -382,6 +680,26 @@
 
       const selectedDateBookings = bookings.filter(b => bookingCoversDate(b, selectedCalDate));
 
+      // Cabana + other room types availability for Calendar
+      const selectedDateAvailability = useMemo(() => {
+        const entries = Object.entries(roomConfig);
+        const orderedEntries = [
+          ...entries.filter(([k]) => k === 'Cabana'),
+          ...entries.filter(([k]) => k !== 'Cabana').slice(0, 3)
+        ];
+        return orderedEntries.map(([key, info]) => {
+          const total = Number(info.total) || 0;
+          const booked = selectedDateBookings.reduce((sum, b) => sum + getBookingRoomCount(b, key), 0);
+          const available = Math.max(0, total - booked);
+          return {
+            key,
+            label: info.label,
+            available,
+            soft: info.soft
+          };
+        });
+      }, [roomConfig, selectedDateBookings]);
+
       // Monthly Bookings & Totals
       const monthlyBookings = useMemo(() => {
         return bookings
@@ -395,17 +713,20 @@
         const arrivedTotal = arrivedList.reduce((sum, b) => sum + (Number(b.price) || 0), 0);
         const notArrivedTotal = notArrivedList.reduce((sum, b) => sum + (Number(b.price) || 0), 0);
         const allTotal = monthlyBookings.reduce((sum, b) => sum + (Number(b.price) || 0), 0);
+        const allAdvanceTotal = monthlyBookings.reduce((sum, b) => sum + (Number(b.advance) || 0), 0);
 
         const bySource = {};
         SOURCE_OPTIONS.forEach(src => {
           const list = monthlyBookings.filter(b => (b.source || 'වෙනත්') === src);
+          const sourceTotal = list.reduce((sum, b) => sum + (Number(b.price) || 0), 0);
+          const advanceTotal = list.reduce((sum, b) => sum + (Number(b.advance) || 0), 0);
           const arrivedSrcTotal = list
             .filter(b => b.status === 'arrived')
             .reduce((sum, b) => sum + (Number(b.price) || 0), 0);
           const notArrivedSrcTotal = list
             .filter(b => b.status === 'not_arrived')
             .reduce((sum, b) => sum + (Number(b.price) || 0), 0);
-          bySource[src] = { arrivedSrcTotal, notArrivedSrcTotal };
+          bySource[src] = { sourceTotal, advanceTotal, arrivedSrcTotal, notArrivedSrcTotal };
         });
 
         return {
@@ -414,6 +735,7 @@
           notArrivedCount: notArrivedList.length,
           notArrivedTotal,
           allTotal,
+          allAdvanceTotal,
           bySource
         };
       }, [monthlyBookings]);
@@ -451,26 +773,51 @@
 
       const renderBookingCard = (b, showDelete = true) => {
         const isDecided = b.status === 'arrived' || b.status === 'not_arrived';
+        const adv = Number(b.advance) || 0;
+        const price = Number(b.price) || 0;
+        const balance = Math.max(0, price - adv);
+
         return (
           <div key={b.id} className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm space-y-2">
             <div className="flex justify-between items-start">
               <div>
                 <p className="text-sm font-bold text-slate-800">{b.guest}</p>
-                <p className="text-xs text-slate-500">{b.date} • {b.roomType} • {renderPackageText(b)}</p>
+                <p className="text-xs text-slate-500">{b.date} • {formatBookingRoomsText(b)} • {renderPackageText(b)}</p>
                 <p className="text-xs text-slate-600 mt-0.5">කාණ්ඩය: <span className="font-semibold">{b.source || 'වෙනත්'}</span></p>
+                {adv > 0 && (
+                  <p className="text-xs text-sky-700 mt-0.5">
+                    Advance: <span className="font-bold">Rs. {adv.toLocaleString()}</span> • ඉතිරි: <span className="font-semibold">Rs. {balance.toLocaleString()}</span>
+                  </p>
+                )}
                 {b.notes && <p className="text-xs text-slate-600 mt-1 bg-slate-50 px-2 py-1 rounded">සටහන: {b.notes}</p>}
               </div>
               <div className="text-right">
-                <p className="text-sm font-bold text-emerald-700">Rs. {Number(b.price).toLocaleString()}</p>
+                <p className="text-sm font-bold text-emerald-700">Rs. {price.toLocaleString()}</p>
                 {b.status === 'arrived' && (
-                  <span className="inline-block mt-1 text-[11px] px-2 py-0.5 rounded-full font-semibold bg-emerald-100 text-emerald-800">
+                  <button
+                    type="button"
+                    disabled={!isAdmin}
+                    onClick={() => toggleAttendanceBadge(b.id, b.status)}
+                    title={isAdmin ? 'ඔබා වෙනස් කරන්න' : ''}
+                    className={`inline-block mt-1 text-[11px] px-2 py-0.5 rounded-full font-semibold bg-emerald-100 text-emerald-800 ${
+                      isAdmin ? 'cursor-pointer hover:bg-emerald-200 active:scale-95 transition' : ''
+                    }`}
+                  >
                     පැමිණියා
-                  </span>
+                  </button>
                 )}
                 {b.status === 'not_arrived' && (
-                  <span className="inline-block mt-1 text-[11px] px-2 py-0.5 rounded-full font-semibold bg-rose-100 text-rose-800">
+                  <button
+                    type="button"
+                    disabled={!isAdmin}
+                    onClick={() => toggleAttendanceBadge(b.id, b.status)}
+                    title={isAdmin ? 'ඔබා වෙනස් කරන්න' : ''}
+                    className={`inline-block mt-1 text-[11px] px-2 py-0.5 rounded-full font-semibold bg-rose-100 text-rose-800 ${
+                      isAdmin ? 'cursor-pointer hover:bg-rose-200 active:scale-95 transition' : ''
+                    }`}
+                  >
                     නොපැමිණි
-                  </span>
+                  </button>
                 )}
               </div>
             </div>
@@ -479,14 +826,14 @@
               <div className="flex gap-2 pt-2 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => selectAttendanceOnce(b.id, 'arrived')}
+                  onClick={() => selectAttendanceStatus(b.id, 'arrived')}
                   className="flex-1 py-1.5 rounded-lg text-xs font-semibold border bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 flex items-center justify-center gap-1"
                 >
                   <i className="fa-solid fa-check"></i> පැමිණියා
                 </button>
                 <button
                   type="button"
-                  onClick={() => selectAttendanceOnce(b.id, 'not_arrived')}
+                  onClick={() => selectAttendanceStatus(b.id, 'not_arrived')}
                   className="flex-1 py-1.5 rounded-lg text-xs font-semibold border bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100 flex items-center justify-center gap-1"
                 >
                   <i className="fa-solid fa-xmark"></i> නොපැමිණි
@@ -498,7 +845,12 @@
               <div className="flex items-center justify-end gap-2 pt-1.5 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => setEditingBooking({ ...b })}
+                  onClick={() => setEditingBooking({
+                    ...b,
+                    roomSelections: Array.isArray(b.roomSelections) && b.roomSelections.length > 0
+                      ? b.roomSelections
+                      : [{ roomType: b.roomType || defaultRoomKey, qty: Number(b.roomQty) || 1 }]
+                  })}
                   className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 flex items-center gap-1"
                 >
                   <i className="fa-solid fa-pen"></i> Edit
@@ -525,7 +877,7 @@
           <header className="bg-emerald-700 text-white p-4 sticky top-0 z-10 flex justify-between items-center shadow-md">
             <div>
               <h1 className="text-lg font-bold">Green Stay Negombo</h1>
-              <p className="text-xs text-emerald-100">කාමර වෙන්කිරීම් කළමනාකරු</p>
+              <p className="text-xs text-emerald-100">කාමර වෙන්කිරීම් කළමනාකරු • {syncStatus}</p>
             </div>
             <button
               type="button"
@@ -564,7 +916,7 @@
                   <h2 className="text-xs font-bold text-slate-500 uppercase mb-2">කාමර ධාරිතාව (Rooms)</h2>
                   <div className="grid grid-cols-2 gap-2">
                     {Object.entries(roomConfig).map(([key, info]) => {
-                      const bookedToday = todayBookings.filter(b => b.roomType === key).length;
+                      const bookedToday = todayBookings.reduce((sum, b) => sum + getBookingRoomCount(b, key), 0);
                       return (
                         <div key={key} className={`p-2.5 rounded-lg border text-xs flex justify-between items-center ${info.soft}`}>
                           <span className="font-semibold">{info.label}</span>
@@ -591,7 +943,7 @@
                         .map(b => (
                           <div key={b.id} className="bg-white p-3 rounded-lg border border-slate-100 shadow-sm flex justify-between items-center">
                             <div>
-                              <p className="text-sm font-bold text-slate-800">{b.guest} <span className="text-xs font-normal text-slate-500">({b.roomType})</span></p>
+                              <p className="text-sm font-bold text-slate-800">{b.guest} <span className="text-xs font-normal text-slate-500">({formatBookingRoomsText(b)})</span></p>
                               <p className="text-xs text-slate-500">{b.date} • {renderPackageText(b)}</p>
                             </div>
                             <span className="text-xs font-bold text-emerald-700">Rs. {Number(b.price).toLocaleString()}</span>
@@ -651,6 +1003,31 @@
                   </div>
                 </div>
 
+                {/* Available Rooms for Selected Date */}
+                <div className="bg-white border border-slate-200 rounded-xl p-3.5 shadow-sm">
+                  <h3 className="text-xs font-bold text-slate-600 uppercase mb-2">
+                    <i className="fa-solid fa-door-open text-emerald-700 mr-1.5"></i>
+                    {selectedCalDate} Book කළ හැකි Rooms (Day Out / Night Out / Standard)
+                  </h3>
+                  <div className="grid grid-cols-2 gap-2">
+                    {selectedDateAvailability.map(item => (
+                      <div
+                        key={item.key}
+                        className={`p-2.5 rounded-lg border text-xs flex justify-between items-center ${
+                          item.available > 0 ? item.soft : 'bg-rose-50 text-rose-700 border-rose-200'
+                        }`}
+                      >
+                        <span className="font-semibold">{item.label}</span>
+                        {item.available > 0 ? (
+                          <span className="font-bold">{item.available} ඉතිරි</span>
+                        ) : (
+                          <span className="font-bold text-rose-600">නැත</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
                 {/* Selected Date Bookings */}
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5">
                   <div className="flex justify-between items-center mb-3">
@@ -688,17 +1065,30 @@
                   />
                 </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Price (Rs.)</label>
-                  <input
-                    type="number"
-                    required
-                    min="0"
-                    placeholder="මුදල (උදා: 15000)"
-                    value={formData.price}
-                    onChange={e => setFormData({ ...formData, price: e.target.value })}
-                    className="w-full p-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-emerald-600"
-                  />
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Price (Rs.)</label>
+                    <input
+                      type="number"
+                      required
+                      min="0"
+                      placeholder="මුදල (උදා: 15000)"
+                      value={formData.price}
+                      onChange={e => setFormData({ ...formData, price: e.target.value })}
+                      className="w-full p-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-emerald-600"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Advance (Rs.)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      placeholder="අත්තිකාරම්"
+                      value={formData.advance}
+                      onChange={e => setFormData({ ...formData, advance: e.target.value })}
+                      className="w-full p-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-emerald-600"
+                    />
+                  </div>
                 </div>
 
                 <div>
@@ -725,19 +1115,59 @@
                   ></textarea>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">Room Type</label>
-                    <select
-                      value={formData.roomType}
-                      onChange={e => setFormData({ ...formData, roomType: e.target.value })}
-                      className="w-full p-2.5 text-sm border border-slate-300 rounded-lg bg-white"
+                {/* Multiple Room Types & Quantities */}
+                <div className="space-y-2 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                  <div className="flex justify-between items-center">
+                    <label className="text-xs font-bold text-slate-700">Room Types & Quantity</label>
+                    <button
+                      type="button"
+                      onClick={addFormRoomRow}
+                      className="text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg hover:bg-emerald-100"
                     >
-                      {roomKeys.map(r => (
-                        <option key={r} value={r}>{roomConfig[r]?.label || r}</option>
-                      ))}
-                    </select>
+                      + තව Room එකක්
+                    </button>
                   </div>
+
+                  {formData.roomSelections.map((item, idx) => (
+                    <div key={idx} className="grid grid-cols-12 gap-2 items-center">
+                      <div className="col-span-7">
+                        <select
+                          value={item.roomType}
+                          onChange={e => updateFormRoomSelection(idx, 'roomType', e.target.value)}
+                          className="w-full p-2 text-xs border border-slate-300 rounded-lg bg-white"
+                        >
+                          {roomKeys.map(r => (
+                            <option key={r} value={r}>{roomConfig[r]?.label || r}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="col-span-3">
+                        <input
+                          type="number"
+                          min="1"
+                          value={item.qty}
+                          onChange={e => updateFormRoomSelection(idx, 'qty', e.target.value)}
+                          className="w-full p-2 text-xs border border-slate-300 rounded-lg bg-white text-center font-bold"
+                          title="Quantity"
+                        />
+                      </div>
+                      <div className="col-span-2 flex justify-end">
+                        {formData.roomSelections.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => removeFormRoomRow(idx)}
+                            className="text-rose-600 hover:bg-rose-50 p-2 rounded-lg text-xs"
+                            title="Remove"
+                          >
+                            <i className="fa-solid fa-trash"></i>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-semibold text-slate-600 mb-1">දිනය (Date)</label>
                     <input
@@ -748,24 +1178,23 @@
                       className="w-full p-2.5 text-sm border border-slate-300 rounded-lg"
                     />
                   </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Package</label>
-                  <select
-                    value={formData.type}
-                    onChange={e => setFormData({
-                      ...formData,
-                      type: e.target.value,
-                      customCheckInDate: formData.customCheckInDate || formData.date,
-                      customCheckOutDate: formData.customCheckOutDate || formData.date
-                    })}
-                    className="w-full p-2.5 text-sm border border-slate-300 rounded-lg bg-white"
-                  >
-                    {PACKAGES.map(p => (
-                      <option key={p.id} value={p.id}>{p.label}</option>
-                    ))}
-                  </select>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Package</label>
+                    <select
+                      value={formData.type}
+                      onChange={e => setFormData({
+                        ...formData,
+                        type: e.target.value,
+                        customCheckInDate: formData.customCheckInDate || formData.date,
+                        customCheckOutDate: formData.customCheckOutDate || formData.date
+                      })}
+                      className="w-full p-2.5 text-sm border border-slate-300 rounded-lg bg-white"
+                    >
+                      {PACKAGES.map(p => (
+                        <option key={p.id} value={p.id}>{p.label}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
 
                 {formData.type === 'Custom Time' && (
@@ -846,16 +1275,28 @@
                   </div>
                 </div>
 
-                {/* Separate Totals for Nirmal / Travel Corner / වෙනත් */}
+                {/* Total Advance Card */}
+                <div className="bg-sky-50 border border-sky-200 p-3 rounded-xl flex justify-between items-center">
+                  <span className="text-xs font-bold text-sky-900">මුළු Advance එකතුව</span>
+                  <span className="text-sm font-bold text-sky-900">Rs. {bookingStats.allAdvanceTotal.toLocaleString()}</span>
+                </div>
+
+                {/* Separate Totals & Advance Totals for Each Source */}
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
-                  <h3 className="text-xs font-bold text-slate-600">කාණ්ඩ අනුව එකතුව (පැමිණි / නොපැමිණි)</h3>
+                  <h3 className="text-xs font-bold text-slate-600">කාණ්ඩ අනුව Total & Advance එකතුව</h3>
                   <div className="grid grid-cols-1 gap-2">
                     {SOURCE_OPTIONS.map(src => {
-                      const s = bookingStats.bySource[src] || { arrivedSrcTotal: 0, notArrivedSrcTotal: 0 };
+                      const s = bookingStats.bySource[src] || { sourceTotal: 0, advanceTotal: 0, arrivedSrcTotal: 0, notArrivedSrcTotal: 0 };
                       return (
-                        <div key={src} className="bg-white p-2.5 rounded-lg border border-slate-200 flex justify-between items-center text-xs">
-                          <span className="font-bold text-slate-800">{src}</span>
-                          <div className="flex gap-3">
+                        <div key={src} className="bg-white p-2.5 rounded-lg border border-slate-200 space-y-1 text-xs">
+                          <div className="flex justify-between items-center">
+                            <span className="font-bold text-slate-800">{src}</span>
+                            <div className="flex gap-3">
+                              <span className="font-bold text-slate-900">Total: Rs. {s.sourceTotal.toLocaleString()}</span>
+                              <span className="font-bold text-sky-700">Advance: Rs. {s.advanceTotal.toLocaleString()}</span>
+                            </div>
+                          </div>
+                          <div className="flex gap-3 text-[11px]">
                             <span className="font-semibold text-emerald-700">පැමිණි: Rs. {s.arrivedSrcTotal.toLocaleString()}</span>
                             <span className="font-semibold text-rose-700">නොපැමිණි: Rs. {s.notArrivedSrcTotal.toLocaleString()}</span>
                           </div>
@@ -1123,16 +1564,28 @@
                   />
                 </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Price (Rs.)</label>
-                  <input
-                    type="number"
-                    required
-                    min="0"
-                    value={editingBooking.price}
-                    onChange={e => setEditingBooking({ ...editingBooking, price: e.target.value })}
-                    className="w-full p-2 text-sm border border-slate-300 rounded-lg"
-                  />
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Price (Rs.)</label>
+                    <input
+                      type="number"
+                      required
+                      min="0"
+                      value={editingBooking.price}
+                      onChange={e => setEditingBooking({ ...editingBooking, price: e.target.value })}
+                      className="w-full p-2 text-sm border border-slate-300 rounded-lg"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Advance (Rs.)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={editingBooking.advance || ''}
+                      onChange={e => setEditingBooking({ ...editingBooking, advance: e.target.value })}
+                      className="w-full p-2 text-sm border border-slate-300 rounded-lg"
+                    />
+                  </div>
                 </div>
 
                 <div>
@@ -1158,19 +1611,56 @@
                   ></textarea>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">Room Type</label>
-                    <select
-                      value={editingBooking.roomType}
-                      onChange={e => setEditingBooking({ ...editingBooking, roomType: e.target.value })}
-                      className="w-full p-2 text-sm border border-slate-300 rounded-lg bg-white"
+                {/* Edit Room Types & Quantities */}
+                <div className="space-y-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+                  <div className="flex justify-between items-center">
+                    <label className="text-xs font-bold text-slate-700">Room Types & Quantity</label>
+                    <button
+                      type="button"
+                      onClick={addEditRoomRow}
+                      className="text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-lg"
                     >
-                      {roomKeys.map(r => (
-                        <option key={r} value={r}>{roomConfig[r]?.label || r}</option>
-                      ))}
-                    </select>
+                      + Room
+                    </button>
                   </div>
+                  {(editingBooking.roomSelections || []).map((item, idx) => (
+                    <div key={idx} className="grid grid-cols-12 gap-2 items-center">
+                      <div className="col-span-7">
+                        <select
+                          value={item.roomType}
+                          onChange={e => updateEditRoomSelection(idx, 'roomType', e.target.value)}
+                          className="w-full p-1.5 text-xs border border-slate-300 rounded-lg bg-white"
+                        >
+                          {roomKeys.map(r => (
+                            <option key={r} value={r}>{roomConfig[r]?.label || r}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="col-span-3">
+                        <input
+                          type="number"
+                          min="1"
+                          value={item.qty}
+                          onChange={e => updateEditRoomSelection(idx, 'qty', e.target.value)}
+                          className="w-full p-1.5 text-xs border border-slate-300 rounded-lg bg-white text-center font-bold"
+                        />
+                      </div>
+                      <div className="col-span-2 flex justify-end">
+                        {(editingBooking.roomSelections || []).length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => removeEditRoomRow(idx)}
+                            className="text-rose-600 p-1.5 text-xs"
+                          >
+                            <i className="fa-solid fa-trash"></i>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="block text-xs font-semibold text-slate-600 mb-1">දිනය (Date)</label>
                     <input
@@ -1181,24 +1671,23 @@
                       className="w-full p-2 text-sm border border-slate-300 rounded-lg"
                     />
                   </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Package</label>
-                  <select
-                    value={editingBooking.type}
-                    onChange={e => setEditingBooking({
-                      ...editingBooking,
-                      type: e.target.value,
-                      customCheckInDate: editingBooking.customCheckInDate || editingBooking.date,
-                      customCheckOutDate: editingBooking.customCheckOutDate || editingBooking.date
-                    })}
-                    className="w-full p-2 text-sm border border-slate-300 rounded-lg bg-white"
-                  >
-                    {PACKAGES.map(p => (
-                      <option key={p.id} value={p.id}>{p.label}</option>
-                    ))}
-                  </select>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Package</label>
+                    <select
+                      value={editingBooking.type}
+                      onChange={e => setEditingBooking({
+                        ...editingBooking,
+                        type: e.target.value,
+                        customCheckInDate: editingBooking.customCheckInDate || editingBooking.date,
+                        customCheckOutDate: editingBooking.customCheckOutDate || editingBooking.date
+                      })}
+                      className="w-full p-2 text-sm border border-slate-300 rounded-lg bg-white"
+                    >
+                      {PACKAGES.map(p => (
+                        <option key={p.id} value={p.id}>{p.label}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
 
                 {editingBooking.type === 'Custom Time' && (
