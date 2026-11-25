@@ -27,6 +27,7 @@
     const { useState, useEffect, useMemo, useRef } = React;
 
     const ADMIN_PIN = 'N1357';
+    const OWNER_PIN = 'Lm914L';
     // ඔබේ Firebase Realtime Database URL එක ඇතුළත් කර ඇත
     const FIREBASE_DB_URL = 'https://green-stay-hotel-negombo-default-rtdb.asia-southeast1.firebasedatabase.app';
 
@@ -51,10 +52,16 @@
       { id: 'Custom Time', label: 'Custom Time' }
     ];
 
-    const SOURCE_OPTIONS = ['Nirmal', 'Nirmal booking.com', 'Travel Corner', 'වෙනත්'];
+    const SOURCE_OPTIONS = ['Nirmal', 'Nirmal booking sites', 'Travel Corner', 'Maple Leaf'];
 
     const SI_MONTHS = ['ජනවාරි', 'පෙබරවාරි', 'මාර්තු', 'අප්‍රේල්', 'මැයි', 'ජූනි', 'ජූලි', 'අගෝස්තු', 'සැප්තැම්බර්', 'ඔක්තෝබර්', 'නොවැම්බර්', 'දෙසැම්බර්'];
     const SI_DAYS = ['ඉරි', 'සඳු', 'අඟ', 'බදා', 'බ්‍රහ', 'සිකු', 'සෙන'];
+
+    function normalizeSource(src) {
+      if (!src || src === 'Other' || src === 'වෙනත්') return 'Maple Leaf';
+      if (src === 'Nirmal booking.com') return 'Nirmal booking sites';
+      return SOURCE_OPTIONS.includes(src) ? src : 'Maple Leaf';
+    }
 
     function todayISO() {
       const d = new Date();
@@ -143,9 +150,14 @@
     }
 
     function App() {
-      const [isAdmin, setIsAdmin] = useState(() => {
-        return localStorage.getItem('gs_admin_logged_in_v1') === 'true';
+      // role: 'view' | 'admin' | 'owner'
+      const [role, setRole] = useState(() => {
+        const saved = localStorage.getItem('gs_user_role_v1');
+        return saved === 'admin' || saved === 'owner' ? saved : 'view';
       });
+      const isAdmin = role === 'admin' || role === 'owner';
+      const isOwner = role === 'owner';
+
       const [showPinModal, setShowPinModal] = useState(false);
       const [pinInput, setPinInput] = useState('');
       const [pinError, setPinError] = useState('');
@@ -165,11 +177,14 @@
       // Bookings State
       const [bookings, setBookings] = useState(() => {
         const saved = localStorage.getItem('gs_bookings_v4');
-        if (saved) return JSON.parse(saved);
-        const v3 = localStorage.getItem('gs_bookings_v3');
-        if (v3) return JSON.parse(v3);
-        const legacy = localStorage.getItem('gs_bookings_v2');
-        return legacy ? JSON.parse(legacy) : [];
+        const list = saved ? JSON.parse(saved) : [];
+        return Array.isArray(list) ? list.map(b => ({ ...b, source: normalizeSource(b.source) })) : [];
+      });
+
+      // Delete Requests State: [{ id, bookingId, requestedBy, requestedAt, reason, snapshot }]
+      const [deleteRequests, setDeleteRequests] = useState(() => {
+        const saved = localStorage.getItem('gs_delete_requests_v1');
+        return saved ? JSON.parse(saved) : [];
       });
 
       // Expenses State
@@ -181,7 +196,7 @@
       const roomKeys = Object.keys(roomConfig);
       const defaultRoomKey = roomKeys[0] || 'Double';
 
-      // Add Booking Form State (supports multiple room types + quantities)
+      // Add Booking Form State
       const [formData, setFormData] = useState({
         guest: '',
         price: '',
@@ -196,6 +211,10 @@
         customCheckOutTime: '',
         date: todayISO()
       });
+
+      // Delete Request Modal State (for Admin)
+      const [requestingDeleteBooking, setRequestingDeleteBooking] = useState(null);
+      const [deleteReason, setDeleteReason] = useState('');
 
       // Edit Booking Modal State
       const [editingBooking, setEditingBooking] = useState(null);
@@ -219,12 +238,12 @@
         date: todayISO()
       });
 
-      const lastRemotePayloadRef = useRef('');
-      const skipNextPushRef = useRef(false);
+      const lastSyncedSnapshotRef = useRef('');
+      const isApplyingRemoteRef = useRef(false);
 
       useEffect(() => {
-        localStorage.setItem('gs_admin_logged_in_v1', isAdmin ? 'true' : 'false');
-      }, [isAdmin]);
+        localStorage.setItem('gs_user_role_v1', role);
+      }, [role]);
 
       useEffect(() => {
         localStorage.setItem('gs_room_config_v1', JSON.stringify(roomConfig));
@@ -235,10 +254,14 @@
       }, [bookings]);
 
       useEffect(() => {
+        localStorage.setItem('gs_delete_requests_v1', JSON.stringify(deleteRequests));
+      }, [deleteRequests]);
+
+      useEffect(() => {
         localStorage.setItem('gs_expenses_v1', JSON.stringify(expenses));
       }, [expenses]);
 
-      // Firebase Realtime Database Sync (Push on local changes + Poll every 3 seconds)
+      // Firebase Realtime Database Sync
       useEffect(() => {
         const baseUrl = getCleanFirebaseBaseUrl();
         if (!baseUrl) {
@@ -250,25 +273,35 @@
 
         const pullFromFirebase = async () => {
           try {
-            const res = await fetch(`${baseUrl}/greenStayNegombo.json`);
+            const res = await fetch(`${baseUrl}/greenStayNegombo.json?t=${Date.now()}`);
             if (!res.ok) throw new Error('Network error');
             const data = await res.json();
             if (cancelled) return;
 
             if (data) {
-              const serialized = JSON.stringify({
-                bookings: data.bookings || [],
-                expenses: data.expenses || [],
-                roomConfig: data.roomConfig || DEFAULT_ROOM_CONFIG
+              const normalizedBookings = Array.isArray(data.bookings)
+                ? data.bookings.map(b => ({ ...b, source: normalizeSource(b.source) }))
+                : [];
+              const normalizedRequests = Array.isArray(data.deleteRequests) ? data.deleteRequests : [];
+              const normalizedExpenses = Array.isArray(data.expenses) ? data.expenses : [];
+              const normalizedRooms = data.roomConfig && typeof data.roomConfig === 'object'
+                ? data.roomConfig
+                : DEFAULT_ROOM_CONFIG;
+
+              const comparable = JSON.stringify({
+                bookings: normalizedBookings,
+                deleteRequests: normalizedRequests,
+                expenses: normalizedExpenses,
+                roomConfig: normalizedRooms
               });
-              if (serialized !== lastRemotePayloadRef.current) {
-                lastRemotePayloadRef.current = serialized;
-                skipNextPushRef.current = true;
-                if (Array.isArray(data.bookings)) setBookings(data.bookings);
-                if (Array.isArray(data.expenses)) setExpenses(data.expenses);
-                if (data.roomConfig && typeof data.roomConfig === 'object') {
-                  setRoomConfig(data.roomConfig);
-                }
+
+              if (comparable !== lastSyncedSnapshotRef.current) {
+                lastSyncedSnapshotRef.current = comparable;
+                isApplyingRemoteRef.current = true;
+                setBookings(normalizedBookings);
+                setDeleteRequests(normalizedRequests);
+                setExpenses(normalizedExpenses);
+                setRoomConfig(normalizedRooms);
               }
             }
             setSyncStatus('Live');
@@ -278,7 +311,7 @@
         };
 
         pullFromFirebase();
-        const intervalId = setInterval(pullFromFirebase, 3000);
+        const intervalId = setInterval(pullFromFirebase, 4000);
 
         return () => {
           cancelled = true;
@@ -290,49 +323,49 @@
         const baseUrl = getCleanFirebaseBaseUrl();
         if (!baseUrl) return;
 
-        if (skipNextPushRef.current) {
-          skipNextPushRef.current = false;
+        if (isApplyingRemoteRef.current) {
+          isApplyingRemoteRef.current = false;
           return;
         }
 
-        const payload = {
-          bookings,
-          expenses,
-          roomConfig,
-          updatedAt: Date.now()
-        };
         const comparable = JSON.stringify({
           bookings,
+          deleteRequests,
           expenses,
           roomConfig
         });
 
-        if (comparable === lastRemotePayloadRef.current) return;
+        if (comparable === lastSyncedSnapshotRef.current) return;
 
         fetch(`${baseUrl}/greenStayNegombo.json`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
+          body: JSON.stringify({
+            bookings,
+            deleteRequests,
+            expenses,
+            roomConfig,
+            updatedAt: Date.now()
+          })
         })
           .then(res => {
             if (res.ok) {
-              lastRemotePayloadRef.current = comparable;
+              lastSyncedSnapshotRef.current = comparable;
               setSyncStatus('Live');
             } else {
               setSyncStatus('Error');
             }
           })
           .catch(() => setSyncStatus('Offline'));
-      }, [bookings, expenses, roomConfig]);
+      }, [bookings, deleteRequests, expenses, roomConfig]);
 
-      // If user logs out of Admin while on a restricted tab, go back to dashboard
+      // If user logs out of Admin/Owner while on a restricted tab, go back to dashboard
       useEffect(() => {
         if (!isAdmin && (tab === 'add' || tab === 'bookings' || tab === 'expenses' || tab === 'rooms')) {
           setTab('dashboard');
         }
       }, [isAdmin, tab]);
 
-      // Check for overbooking across all affected dates for a candidate booking
       const findOverbookingConflict = (candidateBooking, ignoreBookingId = null) => {
         const { start, end } = getBookingDateRange(candidateBooking);
         const datesToCheck = getDatesInRange(start, end);
@@ -363,9 +396,9 @@
         return null;
       };
 
-      const handleAdminButtonClick = () => {
-        if (isAdmin) {
-          setIsAdmin(false);
+      const handleRoleButtonClick = () => {
+        if (role !== 'view') {
+          setRole('view');
         } else {
           setPinInput('');
           setPinError('');
@@ -375,9 +408,16 @@
 
       const handleVerifyPin = (e) => {
         e.preventDefault();
-        if (pinInput.trim() === ADMIN_PIN) {
-          setIsAdmin(true);
-          localStorage.setItem('gs_admin_logged_in_v1', 'true');
+        const trimmed = pinInput.trim();
+        if (trimmed === OWNER_PIN) {
+          setRole('owner');
+          localStorage.setItem('gs_user_role_v1', 'owner');
+          setShowPinModal(false);
+          setPinInput('');
+          setPinError('');
+        } else if (trimmed === ADMIN_PIN) {
+          setRole('admin');
+          localStorage.setItem('gs_user_role_v1', 'admin');
           setShowPinModal(false);
           setPinInput('');
           setPinError('');
@@ -421,7 +461,6 @@
         setNewRoomTotal('1');
       };
 
-      // Add Form Room Selection Helpers
       const updateFormRoomSelection = (index, field, value) => {
         setFormData(prev => {
           const updated = [...prev.roomSelections];
@@ -450,7 +489,6 @@
         });
       };
 
-      // Edit Modal Room Selection Helpers
       const updateEditRoomSelection = (index, field, value) => {
         setEditingBooking(prev => {
           const list = Array.isArray(prev.roomSelections) && prev.roomSelections.length > 0
@@ -483,7 +521,6 @@
         });
       };
 
-      // Add Booking Handler
       const handleAddBooking = (e) => {
         e.preventDefault();
         if (!isAdmin) return;
@@ -503,7 +540,7 @@
           guest: formData.guest.trim(),
           price: Number(formData.price),
           advance: Number(formData.advance) || 0,
-          source: formData.source || 'Nirmal',
+          source: normalizeSource(formData.source),
           notes: formData.notes.trim(),
           roomType: cleanSelections[0]?.roomType || defaultRoomKey,
           roomQty: totalQty,
@@ -541,7 +578,6 @@
         setTab('bookings');
       };
 
-      // Save Edited Booking
       const handleSaveEdit = (e) => {
         e.preventDefault();
         if (!isAdmin) return;
@@ -563,6 +599,7 @@
           guest: editingBooking.guest.trim(),
           price: Number(editingBooking.price),
           advance: Number(editingBooking.advance) || 0,
+          source: normalizeSource(editingBooking.source),
           notes: (editingBooking.notes || '').trim(),
           roomType: cleanSelections[0]?.roomType || defaultRoomKey,
           roomQty: totalQty,
@@ -583,28 +620,77 @@
         setEditingBooking(null);
       };
 
-      // Set Attendance Status
       const selectAttendanceStatus = (id, status) => {
         if (!isAdmin) return;
         setBookings(bookings.map(b => (b.id === id ? { ...b, status } : b)));
       };
 
-      // Toggle Attendance Status when clicking the badge
       const toggleAttendanceBadge = (id, currentStatus) => {
         if (!isAdmin) return;
         const nextStatus = currentStatus === 'arrived' ? 'not_arrived' : 'arrived';
         setBookings(bookings.map(b => (b.id === id ? { ...b, status: nextStatus } : b)));
       };
 
-      // Delete Booking
-      const deleteBooking = (id) => {
-        if (!isAdmin) return;
-        if (confirm('මෙම Booking එක ඉවත් කිරීමට අවශ්‍යද?')) {
+      // Admin sends a Delete Request to Owner
+      const openDeleteRequestModal = (booking) => {
+        setRequestingDeleteBooking(booking);
+        setDeleteReason('');
+      };
+
+      const handleSubmitDeleteRequest = (e) => {
+        e.preventDefault();
+        if (!isAdmin || !requestingDeleteBooking) return;
+
+        const alreadyRequested = deleteRequests.some(r => r.bookingId === requestingDeleteBooking.id);
+        if (alreadyRequested) {
+          alert('මෙම Booking එක සඳහා Delete Request එකක් දැනටමත් Owner වෙත යවා ඇත.');
+          setRequestingDeleteBooking(null);
+          return;
+        }
+
+        const newReq = {
+          id: Date.now(),
+          bookingId: requestingDeleteBooking.id,
+          requestedBy: 'Admin',
+          requestedAt: new Date().toLocaleString('si-LK'),
+          reason: deleteReason.trim() || 'හේතුවක් සඳහන් කර නැත',
+          snapshot: {
+            guest: requestingDeleteBooking.guest,
+            date: requestingDeleteBooking.date,
+            rooms: formatBookingRoomsText(requestingDeleteBooking),
+            price: Number(requestingDeleteBooking.price) || 0,
+            source: normalizeSource(requestingDeleteBooking.source)
+          }
+        };
+
+        setDeleteRequests([newReq, ...deleteRequests]);
+        setRequestingDeleteBooking(null);
+        setDeleteReason('');
+        alert('Delete Request එක Owner වෙත යවන ලදී. Owner approve කළ පසු delete වනු ඇත.');
+      };
+
+      // Owner directly deletes a booking (and removes any pending request for it)
+      const ownerDeleteBooking = (id) => {
+        if (!isOwner) return;
+        if (confirm('Owner ලෙස මෙම Booking එක සම්පූර්ණයෙන්ම ඉවත් කිරීමට අවශ්‍යද?')) {
           setBookings(bookings.filter(b => b.id !== id));
+          setDeleteRequests(deleteRequests.filter(r => r.bookingId !== id));
         }
       };
 
-      // Add Expense Handler
+      // Owner approves a delete request -> actually deletes the booking
+      const handleApproveDeleteRequest = (req) => {
+        if (!isOwner) return;
+        setBookings(prev => prev.filter(b => b.id !== req.bookingId));
+        setDeleteRequests(prev => prev.filter(r => r.id !== req.id));
+      };
+
+      // Owner rejects a delete request -> removes the request, booking remains intact
+      const handleRejectDeleteRequest = (reqId) => {
+        if (!isOwner) return;
+        setDeleteRequests(prev => prev.filter(r => r.id !== reqId));
+      };
+
       const handleAddExpense = (e) => {
         e.preventDefault();
         if (!isAdmin) return;
@@ -626,7 +712,6 @@
         });
       };
 
-      // Save Edited Expense
       const handleSaveExpenseEdit = (e) => {
         e.preventDefault();
         if (!isAdmin) return;
@@ -642,7 +727,6 @@
         setEditingExpense(null);
       };
 
-      // Delete Expense
       const deleteExpense = (id) => {
         if (!isAdmin) return;
         if (confirm('මෙම වියදම ඉවත් කිරීමට අවශ්‍යද?')) {
@@ -650,12 +734,10 @@
         }
       };
 
-      // Total Rooms Capacity
       const totalRoomsCapacity = useMemo(() => {
         return Object.values(roomConfig).reduce((sum, r) => sum + (Number(r.total) || 0), 0);
       }, [roomConfig]);
 
-      // Today stats for Dashboard
       const today = todayISO();
       const todayBookings = bookings.filter(b => bookingCoversDate(b, today));
       const todayDayOut = todayBookings
@@ -665,7 +747,6 @@
         .filter(b => b.type === 'Night Out' || b.type === '1 Night Standard')
         .reduce((sum, b) => sum + getBookingRoomCount(b), 0);
 
-      // Calendar Grid Calculation
       const calendarDays = useMemo(() => {
         const firstDay = new Date(calYear, calMonth, 1).getDay();
         const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
@@ -680,7 +761,6 @@
 
       const selectedDateBookings = bookings.filter(b => bookingCoversDate(b, selectedCalDate));
 
-      // Cabana + other room types availability for Calendar
       const selectedDateAvailability = useMemo(() => {
         const entries = Object.entries(roomConfig);
         const orderedEntries = [
@@ -700,7 +780,6 @@
         });
       }, [roomConfig, selectedDateBookings]);
 
-      // Monthly Bookings & Totals
       const monthlyBookings = useMemo(() => {
         return bookings
           .filter(b => b.date && b.date.startsWith(bookingFilterMonth))
@@ -717,7 +796,7 @@
 
         const bySource = {};
         SOURCE_OPTIONS.forEach(src => {
-          const list = monthlyBookings.filter(b => (b.source || 'වෙනත්') === src);
+          const list = monthlyBookings.filter(b => normalizeSource(b.source) === src);
           const sourceTotal = list.reduce((sum, b) => sum + (Number(b.price) || 0), 0);
           const advanceTotal = list.reduce((sum, b) => sum + (Number(b.advance) || 0), 0);
           const arrivedSrcTotal = list
@@ -740,7 +819,6 @@
         };
       }, [monthlyBookings]);
 
-      // Monthly Expenses & Total
       const monthlyExpenses = useMemo(() => {
         return expenses
           .filter(ex => ex.date && ex.date.startsWith(expenseFilterMonth))
@@ -771,11 +849,13 @@
         return b.type;
       };
 
-      const renderBookingCard = (b, showDelete = true) => {
+      const renderBookingCard = (b, showDeleteControl = true) => {
         const isDecided = b.status === 'arrived' || b.status === 'not_arrived';
         const adv = Number(b.advance) || 0;
         const price = Number(b.price) || 0;
         const balance = Math.max(0, price - adv);
+        const srcLabel = normalizeSource(b.source);
+        const hasPendingDeleteReq = deleteRequests.some(r => r.bookingId === b.id);
 
         return (
           <div key={b.id} className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm space-y-2">
@@ -783,13 +863,18 @@
               <div>
                 <p className="text-sm font-bold text-slate-800">{b.guest}</p>
                 <p className="text-xs text-slate-500">{b.date} • {formatBookingRoomsText(b)} • {renderPackageText(b)}</p>
-                <p className="text-xs text-slate-600 mt-0.5">කාණ්ඩය: <span className="font-semibold">{b.source || 'වෙනත්'}</span></p>
+                <p className="text-xs text-slate-600 mt-0.5">කාණ්ඩය: <span className="font-semibold">{srcLabel}</span></p>
                 {adv > 0 && (
                   <p className="text-xs text-sky-700 mt-0.5">
                     Advance: <span className="font-bold">Rs. {adv.toLocaleString()}</span> • ඉතිරි: <span className="font-semibold">Rs. {balance.toLocaleString()}</span>
                   </p>
                 )}
                 {b.notes && <p className="text-xs text-slate-600 mt-1 bg-slate-50 px-2 py-1 rounded">සටහන: {b.notes}</p>}
+                {hasPendingDeleteReq && (
+                  <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded mt-1 inline-block font-semibold">
+                    Delete Request Pending (Owner Approval)
+                  </p>
+                )}
               </div>
               <div className="text-right">
                 <p className="text-sm font-bold text-emerald-700">Rs. {price.toLocaleString()}</p>
@@ -847,6 +932,7 @@
                   type="button"
                   onClick={() => setEditingBooking({
                     ...b,
+                    source: normalizeSource(b.source),
                     roomSelections: Array.isArray(b.roomSelections) && b.roomSelections.length > 0
                       ? b.roomSelections
                       : [{ roomType: b.roomType || defaultRoomKey, qty: Number(b.roomQty) || 1 }]
@@ -855,14 +941,30 @@
                 >
                   <i className="fa-solid fa-pen"></i> Edit
                 </button>
-                {showDelete && (
+
+                {showDeleteControl && isOwner && (
                   <button
                     type="button"
-                    onClick={() => deleteBooking(b.id)}
-                    className="text-slate-400 hover:text-rose-600 px-2 py-1 text-xs"
-                    title="Delete"
+                    onClick={() => ownerDeleteBooking(b.id)}
+                    className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 flex items-center gap-1"
+                    title="Delete Booking"
                   >
-                    <i className="fa-solid fa-trash"></i>
+                    <i className="fa-solid fa-trash"></i> Delete
+                  </button>
+                )}
+
+                {showDeleteControl && role === 'admin' && (
+                  <button
+                    type="button"
+                    disabled={hasPendingDeleteReq}
+                    onClick={() => openDeleteRequestModal(b)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold border flex items-center gap-1 ${
+                      hasPendingDeleteReq
+                        ? 'bg-amber-50 text-amber-700 border-amber-200 opacity-75 cursor-not-allowed'
+                        : 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'
+                    }`}
+                  >
+                    <i className="fa-solid fa-paper-plane"></i> {hasPendingDeleteReq ? 'Requested' : 'Request Delete'}
                   </button>
                 )}
               </div>
@@ -871,25 +973,31 @@
         );
       };
 
+      const roleBadgeText = role === 'owner' ? 'Owner' : role === 'admin' ? 'Admin' : 'View';
+      const roleBadgeStyle = role === 'owner'
+        ? 'bg-amber-400 text-slate-900 border-amber-300'
+        : role === 'admin'
+        ? 'bg-sky-300 text-slate-900 border-sky-200'
+        : 'bg-emerald-800 text-emerald-200 border-emerald-600 hover:bg-emerald-900';
+
       return (
         <div className="max-w-md mx-auto bg-white min-h-screen shadow-xl relative pb-20">
           {/* Header */}
           <header className="bg-emerald-700 text-white p-4 sticky top-0 z-10 flex justify-between items-center shadow-md">
             <div>
               <h1 className="text-lg font-bold">Green Stay Negombo</h1>
-              <p className="text-xs text-emerald-100">කාමර වෙන්කිරීම් කළමනාකරු • {syncStatus}</p>
+              <p className="text-xs text-emerald-100">
+                කාමර වෙන්කිරීම් කළමනාකරු • {syncStatus}
+                {isOwner && deleteRequests.length > 0 ? ` • Requests (${deleteRequests.length})` : ''}
+              </p>
             </div>
             <button
               type="button"
-              onClick={handleAdminButtonClick}
-              className={`text-xs px-3 py-1.5 rounded-full border flex items-center gap-1.5 font-semibold transition ${
-                isAdmin
-                  ? 'bg-amber-400 text-slate-900 border-amber-300'
-                  : 'bg-emerald-800 text-emerald-200 border-emerald-600 hover:bg-emerald-900'
-              }`}
+              onClick={handleRoleButtonClick}
+              className={`text-xs px-3 py-1.5 rounded-full border flex items-center gap-1.5 font-semibold transition ${roleBadgeStyle}`}
             >
               <i className={`fa-solid ${isAdmin ? 'fa-lock-open' : 'fa-lock'}`}></i>
-              <span>{isAdmin ? 'Admin' : 'View'}</span>
+              <span>{roleBadgeText}</span>
             </button>
           </header>
 
@@ -898,6 +1006,51 @@
             {/* 1. DASHBOARD TAB */}
             {tab === 'dashboard' && (
               <div className="space-y-4">
+                {/* Owner Delete Requests Panel */}
+                {isOwner && deleteRequests.length > 0 && (
+                  <div className="bg-amber-50 border border-amber-300 rounded-xl p-3.5 space-y-2.5 shadow-sm">
+                    <h2 className="text-xs font-bold text-amber-900 uppercase flex items-center gap-1.5">
+                      <i className="fa-solid fa-triangle-exclamation text-amber-600"></i>
+                      Delete Requests ({deleteRequests.length})
+                    </h2>
+                    {deleteRequests.map(req => (
+                      <div key={req.id} className="bg-white p-3 rounded-lg border border-amber-200 space-y-1.5">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <p className="text-sm font-bold text-slate-800">{req.snapshot?.guest}</p>
+                            <p className="text-xs text-slate-500">
+                              {req.snapshot?.date} • {req.snapshot?.rooms} • {req.snapshot?.source}
+                            </p>
+                            <p className="text-xs text-slate-600 mt-1">
+                              හේතුව: <span className="font-semibold">{req.reason}</span>
+                            </p>
+                            <p className="text-[11px] text-slate-400">{req.requestedAt}</p>
+                          </div>
+                          <span className="text-xs font-bold text-emerald-700">
+                            Rs. {Number(req.snapshot?.price || 0).toLocaleString()}
+                          </span>
+                        </div>
+                        <div className="flex gap-2 pt-1.5 border-t border-slate-100">
+                          <button
+                            type="button"
+                            onClick={() => handleApproveDeleteRequest(req)}
+                            className="flex-1 py-1.5 rounded-lg text-xs font-bold bg-rose-600 text-white hover:bg-rose-700 flex items-center justify-center gap-1"
+                          >
+                            <i className="fa-solid fa-check"></i> Approve Delete
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRejectDeleteRequest(req.id)}
+                            className="flex-1 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 flex items-center justify-center gap-1"
+                          >
+                            <i className="fa-solid fa-xmark"></i> Reject
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 <div className="grid grid-cols-2 gap-3">
                   <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-xl text-center">
                     <i className="fa-solid fa-sun text-emerald-600 text-xl mb-1"></i>
@@ -1048,7 +1201,7 @@
               </div>
             )}
 
-            {/* 3. ADD BOOKING TAB (ADMIN ONLY) */}
+            {/* 3. ADD BOOKING TAB (ADMIN / OWNER) */}
             {tab === 'add' && isAdmin && (
               <form onSubmit={handleAddBooking} className="space-y-3.5 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
                 <h2 className="text-base font-bold text-slate-800 border-b pb-2">අලුත් Booking එකක්</h2>
@@ -1245,10 +1398,9 @@
               </form>
             )}
 
-            {/* 4. BOOKINGS LIST TAB (ADMIN ONLY) */}
+            {/* 4. BOOKINGS LIST TAB (ADMIN / OWNER) */}
             {tab === 'bookings' && isAdmin && (
               <div className="space-y-3.5">
-                {/* Month Selector */}
                 <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
                   <span className="text-xs font-bold text-slate-600">මාසය තෝරන්න:</span>
                   <input
@@ -1259,7 +1411,6 @@
                   />
                 </div>
 
-                {/* Overall Monthly Summary Cards */}
                 <div className="grid grid-cols-3 gap-2">
                   <div className="bg-emerald-50 border border-emerald-200 p-2.5 rounded-xl text-center">
                     <p className="text-[11px] font-semibold text-emerald-800">පැමිණි ({bookingStats.arrivedCount})</p>
@@ -1275,13 +1426,11 @@
                   </div>
                 </div>
 
-                {/* Total Advance Card */}
                 <div className="bg-sky-50 border border-sky-200 p-3 rounded-xl flex justify-between items-center">
                   <span className="text-xs font-bold text-sky-900">මුළු Advance එකතුව</span>
                   <span className="text-sm font-bold text-sky-900">Rs. {bookingStats.allAdvanceTotal.toLocaleString()}</span>
                 </div>
 
-                {/* Separate Totals & Advance Totals for Each Source */}
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
                   <h3 className="text-xs font-bold text-slate-600">කාණ්ඩ අනුව Total & Advance එකතුව</h3>
                   <div className="grid grid-cols-1 gap-2">
@@ -1306,7 +1455,6 @@
                   </div>
                 </div>
 
-                {/* Bookings List for Selected Month */}
                 <div className="space-y-2.5">
                   <h3 className="text-xs font-bold text-slate-500 uppercase">
                     {formatMonthLabel(bookingFilterMonth)} Bookings
@@ -1323,10 +1471,9 @@
               </div>
             )}
 
-            {/* 5. EXPENSES TAB (ADMIN ONLY) */}
+            {/* 5. EXPENSES TAB (ADMIN / OWNER) */}
             {tab === 'expenses' && isAdmin && (
               <div className="space-y-4">
-                {/* Add Expense Form */}
                 <form onSubmit={handleAddExpense} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-3">
                   <h2 className="text-sm font-bold text-slate-800 border-b pb-2">වියදමක් එකතු කරන්න (Add Expense)</h2>
                   <div>
@@ -1372,7 +1519,6 @@
                   </button>
                 </form>
 
-                {/* Monthly Filter & Total Expenses */}
                 <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
                   <span className="text-xs font-bold text-slate-600">මාසය තෝරන්න:</span>
                   <input
@@ -1391,7 +1537,6 @@
                   <p className="text-lg font-bold text-rose-900">Rs. {monthlyExpenseTotal.toLocaleString()}</p>
                 </div>
 
-                {/* Expenses Itemized List */}
                 <div className="space-y-2">
                   {monthlyExpenses.length === 0 ? (
                     <div className="bg-white p-6 rounded-xl border border-slate-200 text-center text-xs text-slate-500">
@@ -1430,7 +1575,7 @@
               </div>
             )}
 
-            {/* 6. ROOMS SETTINGS TAB (ADMIN ONLY) */}
+            {/* 6. ROOMS SETTINGS TAB (ADMIN / OWNER) */}
             {tab === 'rooms' && isAdmin && (
               <div className="space-y-4">
                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-3">
@@ -1501,12 +1646,12 @@
             )}
           </main>
 
-          {/* Admin PIN Modal */}
+          {/* PIN Modal (Admin or Owner) */}
           {showPinModal && (
             <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
               <form onSubmit={handleVerifyPin} className="bg-white w-full max-w-xs rounded-2xl p-4 space-y-3 shadow-2xl">
                 <div className="flex justify-between items-center border-b pb-2">
-                  <h3 className="text-sm font-bold text-slate-800">Admin PIN ඇතුළත් කරන්න</h3>
+                  <h3 className="text-sm font-bold text-slate-800">PIN ඇතුළත් කරන්න</h3>
                   <button type="button" onClick={() => setShowPinModal(false)} className="text-slate-400 hover:text-slate-700">
                     <i className="fa-solid fa-xmark"></i>
                   </button>
@@ -1516,7 +1661,7 @@
                     type="password"
                     required
                     autoFocus
-                    placeholder="PIN"
+                    placeholder="Admin / Owner PIN"
                     value={pinInput}
                     onChange={e => setPinInput(e.target.value)}
                     className="w-full p-2.5 text-sm border border-slate-300 rounded-lg"
@@ -1536,6 +1681,48 @@
                     className="flex-1 py-2 rounded-xl bg-emerald-700 text-white text-xs font-bold"
                   >
                     Unlock
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {/* Admin Delete Request Modal */}
+          {requestingDeleteBooking && role === 'admin' && (
+            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+              <form onSubmit={handleSubmitDeleteRequest} className="bg-white w-full max-w-sm rounded-2xl p-4 space-y-3 shadow-2xl">
+                <div className="flex justify-between items-center border-b pb-2">
+                  <h3 className="text-sm font-bold text-slate-800">Owner වෙත Delete Request යවන්න</h3>
+                  <button type="button" onClick={() => setRequestingDeleteBooking(null)} className="text-slate-400 hover:text-slate-700">
+                    <i className="fa-solid fa-xmark"></i>
+                  </button>
+                </div>
+                <p className="text-xs text-slate-600">
+                  Booking: <span className="font-bold text-slate-800">{requestingDeleteBooking.guest}</span> ({requestingDeleteBooking.date})
+                </p>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Delete කිරීමට හේතුව</label>
+                  <textarea
+                    rows="2"
+                    placeholder="උදා: Guest cancelled / Duplicate booking"
+                    value={deleteReason}
+                    onChange={e => setDeleteReason(e.target.value)}
+                    className="w-full p-2 text-xs border border-slate-300 rounded-lg"
+                  ></textarea>
+                </div>
+                <div className="flex gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setRequestingDeleteBooking(null)}
+                    className="flex-1 py-2 rounded-xl border border-slate-300 text-xs font-semibold text-slate-700"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 py-2 rounded-xl bg-amber-500 text-slate-900 text-xs font-bold"
+                  >
+                    Request යවන්න
                   </button>
                 </div>
               </form>
@@ -1591,7 +1778,7 @@
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">කාණ්ඩය (Source)</label>
                   <select
-                    value={editingBooking.source || 'Nirmal'}
+                    value={normalizeSource(editingBooking.source)}
                     onChange={e => setEditingBooking({ ...editingBooking, source: e.target.value })}
                     className="w-full p-2 text-sm border border-slate-300 rounded-lg bg-white"
                   >
@@ -1611,7 +1798,6 @@
                   ></textarea>
                 </div>
 
-                {/* Edit Room Types & Quantities */}
                 <div className="space-y-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200">
                   <div className="flex justify-between items-center">
                     <label className="text-xs font-bold text-slate-700">Room Types & Quantity</label>
