@@ -1,2147 +1,848 @@
 <!DOCTYPE html>
 <html lang="si">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Green Stay Negombo - Room Booking</title>
-
-  <!-- Tailwind CSS & FontAwesome Icons -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-
-  <!-- React & Babel -->
-  <script src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.development.js" crossorigin></script>
-  <script src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.development.js" crossorigin></script>
-  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.25.6/babel.min.js"></script>
-
-  <!-- Google Fonts -->
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Sinhala:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <style>
-    body { font-family: 'Inter', 'Noto Sans Sinhala', sans-serif; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Green Stay Negombo - Room Booking</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<script src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js" crossorigin></script>
+<script src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.25.6/babel.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Sinhala:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>body{font-family:'Inter','Noto Sans Sinhala',sans-serif}</style>
 </head>
 <body class="bg-slate-100 text-slate-800 pb-20">
-  <div id="root"></div>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
-  <script type="text/babel">
-    const { useState, useEffect, useMemo, useRef, useCallback } = React;
+// PIN දෙක දැන් SHA-256 hash විදියට (අකුරු PIN එක code එකේ නැහැ)
+const ADMIN_HASH = 'b01adbccfc069241688de118c7bc3850f27c1dcecaf99caac895bbc3d5013ea8';
+const OWNER_HASH = '08ddf2fc32804dade62ed11dd4858771393a46907c681ddc102f3d13bd0e9915';
+const FIREBASE_DB_URL = 'https://green-stay-hotel-negombo-default-rtdb.asia-southeast1.firebasedatabase.app';
 
-    const ADMIN_PIN = 'N1357';
-    const OWNER_PIN = 'Lm914L';
-    // ඔබේ Firebase Realtime Database URL එක ඇතුළත් කර ඇත
-    const FIREBASE_DB_URL = 'https://green-stay-hotel-negombo-default-rtdb.asia-southeast1.firebasedatabase.app';
+const DEFAULT_ROOM_CONFIG = {
+  Double: { label: 'Double Room', total: 4, color: 'bg-teal-700', soft: 'bg-teal-50 text-teal-800 border-teal-200' },
+  Cabana: { label: 'Cabana', total: 5, color: 'bg-amber-600', soft: 'bg-amber-50 text-amber-800 border-amber-200' },
+  Triple: { label: 'Triple Room', total: 2, color: 'bg-stone-700', soft: 'bg-stone-100 text-stone-800 border-stone-300' },
+  Family: { label: 'Family Room', total: 1, color: 'bg-rose-700', soft: 'bg-rose-50 text-rose-800 border-rose-200' }
+};
+const EXTRA_STYLES = [
+  { color: 'bg-cyan-700', soft: 'bg-cyan-50 text-cyan-800 border-cyan-200' },
+  { color: 'bg-indigo-700', soft: 'bg-indigo-50 text-indigo-800 border-indigo-200' },
+  { color: 'bg-emerald-700', soft: 'bg-emerald-50 text-emerald-800 border-emerald-200' },
+  { color: 'bg-purple-700', soft: 'bg-purple-50 text-purple-800 border-purple-200' }
+];
+const PACKAGES = [
+  { id: 'Day Out', label: 'Day Out (10:00 AM - 5:00 PM)' },
+  { id: 'Night Out', label: 'Night Out (6:30 PM - 8:00 AM)' },
+  { id: '1 Night Standard', label: '1 Night Standard (2:00 PM - 11:00 AM)' },
+  { id: 'Custom Time', label: 'Custom Time' }
+];
+// [check-in, check-out, check-out ඊළඟ දවසේද (1 = ඔව්)]
+const PKG_TIMES = { 'Day Out': ['10:00', '17:00', 0], 'Night Out': ['18:30', '08:00', 1], '1 Night Standard': ['14:00', '11:00', 1] };
+const SOURCE_OPTIONS = ['Nirmal', 'Nirmal booking sites', 'Travel Corner', 'Maple Leaf', 'වෙනත්'];
+const SI_MONTHS = ['ජනවාරි','පෙබරවාරි','මාර්තු','අප්‍රේල්','මැයි','ජූනි','ජූලි','අගෝස්තු','සැප්තැම්බර්','ඔක්තෝබර්','නොවැම්බර්','දෙසැම්බර්'];
+const SI_DAYS = ['ඉරි','සඳු','අඟ','බදා','බ්‍රහ','සිකු','සෙන'];
 
-    const DEFAULT_ROOM_CONFIG = {
-      Double: { label: 'Double Room', total: 4, color: 'bg-teal-700', soft: 'bg-teal-50 text-teal-800 border-teal-200' },
-      Cabana: { label: 'Cabana', total: 5, color: 'bg-amber-600', soft: 'bg-amber-50 text-amber-800 border-amber-200' },
-      Triple: { label: 'Triple Room', total: 2, color: 'bg-stone-700', soft: 'bg-stone-100 text-stone-800 border-stone-300' },
-      Family: { label: 'Family Room', total: 1, color: 'bg-rose-700', soft: 'bg-rose-50 text-rose-800 border-rose-200' }
-    };
+// ---------- helpers ----------
+const normalizeSource = (s) => {
+  if (!s) return 'වෙනත්';
+  if (s === 'Nirmal booking.com') return 'Nirmal booking sites';
+  if (s === 'Other') return 'වෙනත්';
+  return SOURCE_OPTIONS.includes(s) ? s : 'වෙනත්'; // තවදුරටත් "Maple Leaf" වලට හරවන්නේ නැහැ
+};
+const pad = (n) => String(n).padStart(2, '0');
+const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+const currentMonthISO = () => todayISO().slice(0, 7);
+const formatMonthLabel = (ym) => { if (!ym) return ''; const [y, m] = ym.split('-').map(Number); return `${y} ${SI_MONTHS[m - 1]}`; };
+const sha256 = async (s) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)))].map(b => b.toString(16).padStart(2, '0')).join('');
 
-    const EXTRA_STYLES = [
-      { color: 'bg-cyan-700', soft: 'bg-cyan-50 text-cyan-800 border-cyan-200' },
-      { color: 'bg-indigo-700', soft: 'bg-indigo-50 text-indigo-800 border-indigo-200' },
-      { color: 'bg-emerald-700', soft: 'bg-emerald-50 text-emerald-800 border-emerald-200' },
-      { color: 'bg-purple-700', soft: 'bg-purple-50 text-purple-800 border-purple-200' }
-    ];
+// minutes since epoch (UTC based, timezone ගැටලු නැහැ)
+const ts = (iso, t, addDays = 0) => {
+  const [y, m, d] = iso.split('-').map(Number);
+  const [h, mi] = (t || '00:00').split(':').map(Number);
+  return Date.UTC(y, m - 1, d + addDays, h || 0, mi || 0) / 60000;
+};
+// Booking එකක් කාමරය අල්ලාගන්නා නියම කාල පරාසය [start, end)
+function getInterval(b) {
+  if (!b || !b.date) return null;
+  if (b.type === 'Custom Time') {
+    const d1 = b.customCheckInDate || b.date;
+    const d2 = b.customCheckOutDate && b.customCheckOutDate >= d1 ? b.customCheckOutDate : d1;
+    const s = ts(d1, b.customCheckInTime || '00:00');
+    let e = ts(d2, b.customCheckOutTime || '23:59');
+    if (e <= s) e = s + 1;
+    return [s, e];
+  }
+  const p = PKG_TIMES[b.type] || PKG_TIMES['Day Out'];
+  return [ts(b.date, p[0]), ts(b.date, p[1], p[2])];
+}
+const overlaps = (a, b) => a && b && a[0] < b[1] && b[0] < a[1];
+const dayRange = (iso) => [ts(iso, '00:00'), ts(iso, '00:00', 1)];
+const bookingCoversDate = (b, iso) => !!iso && overlaps(getInterval(b), dayRange(iso));
 
-    const PACKAGES = [
-      { id: 'Day Out', label: 'Day Out (10:00 AM - 5:00 PM)' },
-      { id: 'Night Out', label: 'Night Out (6:30 PM - 8:00 AM)' },
-      { id: '1 Night Standard', label: '1 Night Standard (2:00 PM - 11:00 AM)' },
-      { id: 'Custom Time', label: 'Custom Time' }
-    ];
+const getRooms = (b) => Array.isArray(b.roomSelections) && b.roomSelections.length > 0
+  ? b.roomSelections : [{ roomType: b.roomType, qty: Number(b.roomQty) || 1 }];
+const getBookingRoomCount = (b, key = null) =>
+  getRooms(b).filter(i => !key || i.roomType === key).reduce((s, i) => s + (Number(i.qty) || 1), 0);
+const formatBookingRoomsText = (b) => getRooms(b).map(i => `${i.roomType} x${Number(i.qty) || 1}`).join(', ');
 
-    const SOURCE_OPTIONS = ['Nirmal', 'Nirmal booking sites', 'Travel Corner', 'Maple Leaf'];
+// ලබා දුන් කාල පරාසය තුළ එකවර කාමර කීයක් පාවිච්චි වෙනවාද (උපරිමය)
+function peak(list, key, range) {
+  const items = list.map(b => ({ iv: getInterval(b), q: getBookingRoomCount(b, key) }))
+    .filter(x => x.q > 0 && overlaps(x.iv, range));
+  const pts = [range[0], ...items.map(x => x.iv[0]).filter(t => t > range[0] && t < range[1])];
+  return Math.max(0, ...pts.map(t => items.filter(x => x.iv[0] <= t && t < x.iv[1]).reduce((a, x) => a + x.q, 0)));
+}
+function findConflict(cand, ignoreId, list, cfg) {
+  const iv = getInterval(cand);
+  const others = list.filter(b => String(b.id) !== String(ignoreId));
+  const req = {};
+  getRooms(cand).forEach(i => { req[i.roomType] = (req[i.roomType] || 0) + Math.max(1, Number(i.qty) || 1); });
+  for (const [k, q] of Object.entries(req)) {
+    const cap = Number(cfg[k]?.total ?? 0);
+    const used = peak(others, k, iv);
+    if (used + q > cap) return `${cand.date} ${cfg[k]?.label || k} සඳහා එම වේලාවන්ට ඉතිරිව ඇත්තේ ${Math.max(0, cap - used)}/${cap} පමණි. Overbooking කළ නොහැක!`;
+  }
+  return null;
+}
 
-    const SI_MONTHS = ['ජනවාරි', 'පෙබරවාරි', 'මාර්තු', 'අප්‍රේල්', 'මැයි', 'ජූනි', 'ජූලි', 'අගෝස්තු', 'සැප්තැම්බර්', 'ඔක්තෝබර්', 'නොවැම්බර්', 'දෙසැම්බර්'];
-    const SI_DAYS = ['ඉරි', 'සඳු', 'අඟ', 'බදා', 'බ්‍රහ', 'සිකු', 'සෙන'];
+function renderPackageText(b) {
+  if (b.type !== 'Custom Time') return b.type;
+  const d1 = b.customCheckInDate || b.date || '';
+  return `Custom (${d1} ${b.customCheckInTime || '--:--'} → ${b.customCheckOutDate || d1} ${b.customCheckOutTime || '--:--'})`;
+}
 
-    function normalizeSource(src) {
-      if (!src || src === 'Other' || src === 'වෙනත්') return 'Maple Leaf';
-      if (src === 'Nirmal booking.com') return 'Nirmal booking sites';
-      return SOURCE_OPTIONS.includes(src) ? src : 'Maple Leaf';
+function downloadCSV(name, rows) {
+  const csv = '\uFEFF' + rows.map(r => r.map(c => `"${String(c ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = name; a.click();
+}
+function downloadJSON(name, obj) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' }));
+  a.download = name; a.click();
+}
+
+// ---------- Firebase (offline queue සහිත) ----------
+const BASE = (FIREBASE_DB_URL || '').trim().replace(/\/+$/, '');
+const fbUrl = (p) => `${BASE}/greenStayNegombo${p ? '/' + p : ''}.json`;
+let queue = (() => { try { return JSON.parse(localStorage.getItem('gs_pending_v1') || '[]'); } catch (e) { return []; } })();
+const saveQ = () => localStorage.setItem('gs_pending_v1', JSON.stringify(queue));
+async function flush() {
+  while (queue.length) {
+    const op = queue[0];
+    try {
+      const r = await fetch(fbUrl(op.path), op.del ? { method: 'DELETE' } : { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(op.data) });
+      if (!r.ok && r.status >= 500) return false;
+      queue.shift(); saveQ(); // 4xx (Rules වැරදි වගේ) නම් නැවත නැවත උත්සාහ නොකර අත්හරිනවා
+    } catch (e) { return false; }
+  }
+  return true;
+}
+async function sendOp(op) { queue.push(op); saveQ(); return flush(); }
+
+// Firebase map/array -> clean array; id එකට සමාන නොවන key තියෙන ඒවා හදන්න fixes ලබා දෙනවා
+function toArray(raw, col) {
+  const list = [], fixes = [];
+  if (!raw || typeof raw !== 'object') return { list, fixes };
+  Object.entries(raw).forEach(([key, val]) => {
+    if (!val || typeof val !== 'object') return;
+    const id = val.id != null ? val.id : (Number.isNaN(Number(key)) ? key : Number(key));
+    const rec = { ...val, id };
+    list.push(rec);
+    if (String(key) !== String(id)) {
+      fixes.push({ path: `${col}/${id}`, data: rec });
+      fixes.push({ path: `${col}/${key}`, del: true });
     }
-
-    function todayISO() {
-      const d = new Date();
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    }
-
-    function currentMonthISO() {
-      const d = new Date();
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-    }
-
-    function formatMonthLabel(ym) {
-      if (!ym) return '';
-      const [y, m] = ym.split('-').map(Number);
-      return `${y} ${SI_MONTHS[m - 1]}`;
-    }
-
-    function parseISODateUTC(iso) {
-      const [y, m, d] = iso.split('-').map(Number);
-      return new Date(Date.UTC(y, m - 1, d));
-    }
-
-    function formatISODateUTC(dateObj) {
-      const y = dateObj.getUTCFullYear();
-      const m = String(dateObj.getUTCMonth() + 1).padStart(2, '0');
-      const d = String(dateObj.getUTCDate()).padStart(2, '0');
-      return `${y}-${m}-${d}`;
-    }
-
-    function getBookingDateRange(booking) {
-      if (!booking || !booking.date) return { start: '', end: '' };
-      const start = booking.type === 'Custom Time' && booking.customCheckInDate ? booking.customCheckInDate : booking.date;
-      const end = booking.type === 'Custom Time' && booking.customCheckOutDate ? booking.customCheckOutDate : start;
-      const effectiveEnd = end >= start ? end : start;
-      return { start, end: effectiveEnd };
-    }
-
-    function getDatesInRange(startISO, endISO) {
-      if (!startISO) return [];
-      const effectiveEnd = endISO && endISO >= startISO ? endISO : startISO;
-      const dates = [];
-      const cur = parseISODateUTC(startISO);
-      const last = parseISODateUTC(effectiveEnd);
-      while (cur <= last) {
-        dates.push(formatISODateUTC(cur));
-        cur.setUTCDate(cur.getUTCDate() + 1);
-      }
-      return dates;
-    }
-
-    function bookingCoversDate(booking, isoDate) {
-      if (!booking || !booking.date || !isoDate) return false;
-      const { start, end } = getBookingDateRange(booking);
-      return isoDate >= start && isoDate <= end;
-    }
-
-    function getBookingRoomCount(booking, roomKey = null) {
-      if (Array.isArray(booking.roomSelections) && booking.roomSelections.length > 0) {
-        if (roomKey) {
-          return booking.roomSelections
-            .filter(item => item.roomType === roomKey)
-            .reduce((sum, item) => sum + (Number(item.qty) || 1), 0);
-        }
-        return booking.roomSelections.reduce((sum, item) => sum + (Number(item.qty) || 1), 0);
-      }
-      const fallbackQty = Number(booking.roomQty) || 1;
-      if (roomKey) {
-        return booking.roomType === roomKey ? fallbackQty : 0;
-      }
-      return fallbackQty;
-    }
-
-    function formatBookingRoomsText(booking) {
-      if (Array.isArray(booking.roomSelections) && booking.roomSelections.length > 0) {
-        return booking.roomSelections
-          .map(item => `${item.roomType} x${Number(item.qty) || 1}`)
-          .join(', ');
-      }
-      const qty = Number(booking.roomQty) || 1;
-      return qty > 1 ? `${booking.roomType} x${qty}` : booking.roomType;
-    }
-
-    function getCleanFirebaseBaseUrl() {
-      if (!FIREBASE_DB_URL || !FIREBASE_DB_URL.trim()) return '';
-      return FIREBASE_DB_URL.trim().replace(/\/+$/, '');
-    }
-
-    // Convert Firebase object map ({ id1: item1, id2: item2 }) or array into clean array
-    function firebaseCollectionToArray(raw) {
-      if (!raw) return [];
-      if (Array.isArray(raw)) {
-        return raw.filter(item => item && typeof item === 'object' && item.id != null);
-      }
-      if (typeof raw === 'object') {
-        return Object.entries(raw)
-          .filter(([, val]) => val && typeof val === 'object')
-          .map(([key, val]) => ({
-            ...val,
-            id: val.id != null ? val.id : (Number.isNaN(Number(key)) ? key : Number(key))
-          }));
-      }
-      return [];
-    }
-
-    function App() {
-      const [role, setRole] = useState(() => {
-        const saved = localStorage.getItem('gs_user_role_v1');
-        return saved === 'admin' || saved === 'owner' ? saved : 'view';
-      });
-      const isAdmin = role === 'admin' || role === 'owner';
-      const isOwner = role === 'owner';
-
-      const [showPinModal, setShowPinModal] = useState(false);
-      const [pinInput, setPinInput] = useState('');
-      const [pinError, setPinError] = useState('');
-
-      const [tab, setTab] = useState('dashboard');
-      const [syncStatus, setSyncStatus] = useState(() => getCleanFirebaseBaseUrl() ? 'Syncing' : 'Local');
-
-      const [roomConfig, setRoomConfig] = useState(() => {
-        const saved = localStorage.getItem('gs_room_config_v1');
-        return saved ? JSON.parse(saved) : DEFAULT_ROOM_CONFIG;
-      });
-
-      const [newRoomName, setNewRoomName] = useState('');
-      const [newRoomTotal, setNewRoomTotal] = useState('1');
-
-      const [bookings, setBookings] = useState(() => {
-        const saved = localStorage.getItem('gs_bookings_v4');
-        const list = saved ? JSON.parse(saved) : [];
-        return Array.isArray(list) ? list.map(b => ({ ...b, source: normalizeSource(b.source) })) : [];
-      });
-
-      const [deleteRequests, setDeleteRequests] = useState(() => {
-        const saved = localStorage.getItem('gs_delete_requests_v1');
-        return saved ? JSON.parse(saved) : [];
-      });
-
-      const [expenses, setExpenses] = useState(() => {
-        const saved = localStorage.getItem('gs_expenses_v1');
-        return saved ? JSON.parse(saved) : [];
-      });
-
-      const roomKeys = Object.keys(roomConfig);
-      const defaultRoomKey = roomKeys[0] || 'Double';
-
-      const [formData, setFormData] = useState({
-        guest: '',
-        price: '',
-        advance: '',
-        source: 'Nirmal',
-        notes: '',
-        roomSelections: [{ roomType: defaultRoomKey, qty: 1 }],
-        type: 'Day Out',
-        customCheckInDate: todayISO(),
-        customCheckInTime: '',
-        customCheckOutDate: todayISO(),
-        customCheckOutTime: '',
-        date: todayISO()
-      });
-
-      const [requestingDeleteBooking, setRequestingDeleteBooking] = useState(null);
-      const [deleteReason, setDeleteReason] = useState('');
-      const [editingBooking, setEditingBooking] = useState(null);
-      const [editingExpense, setEditingExpense] = useState(null);
-
-      const [calYear, setCalYear] = useState(() => new Date().getFullYear());
-      const [calMonth, setCalMonth] = useState(() => new Date().getMonth());
-      const [selectedCalDate, setSelectedCalDate] = useState(todayISO());
-
-      const [bookingFilterMonth, setBookingFilterMonth] = useState(currentMonthISO());
-      const [expenseFilterMonth, setExpenseFilterMonth] = useState(currentMonthISO());
-
-      const [expForm, setExpForm] = useState({
-        title: '',
-        amount: '',
-        date: todayISO()
-      });
-
-      const isMutatingRef = useRef(false);
-
-      useEffect(() => {
-        localStorage.setItem('gs_user_role_v1', role);
-      }, [role]);
-
-      useEffect(() => {
-        localStorage.setItem('gs_room_config_v1', JSON.stringify(roomConfig));
-      }, [roomConfig]);
-
-      useEffect(() => {
-        localStorage.setItem('gs_bookings_v4', JSON.stringify(bookings));
-      }, [bookings]);
-
-      useEffect(() => {
-        localStorage.setItem('gs_delete_requests_v1', JSON.stringify(deleteRequests));
-      }, [deleteRequests]);
-
-      useEffect(() => {
-        localStorage.setItem('gs_expenses_v1', JSON.stringify(expenses));
-      }, [expenses]);
-
-      // Write or delete a single record by ID in Firebase
-      const upsertRecord = useCallback(async (collectionName, id, recordObj) => {
-        const baseUrl = getCleanFirebaseBaseUrl();
-        if (!baseUrl) return true;
-        isMutatingRef.current = true;
-        try {
-          const res = await fetch(`${baseUrl}/greenStayNegombo/${collectionName}/${id}.json`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(recordObj)
-          });
-          if (res.ok) {
-            setSyncStatus('Live');
-            return true;
-          }
-          setSyncStatus('Error');
-          return false;
-        } catch (err) {
-          setSyncStatus('Offline');
-          return false;
-        } finally {
-          setTimeout(() => { isMutatingRef.current = false; }, 300);
-        }
-      }, []);
-
-      const deleteRecordById = useCallback(async (collectionName, id) => {
-        const baseUrl = getCleanFirebaseBaseUrl();
-        if (!baseUrl) return true;
-        isMutatingRef.current = true;
-        try {
-          const res = await fetch(`${baseUrl}/greenStayNegombo/${collectionName}/${id}.json`, {
-            method: 'DELETE'
-          });
-          if (res.ok) {
-            setSyncStatus('Live');
-            return true;
-          }
-          setSyncStatus('Error');
-          return false;
-        } catch (err) {
-          setSyncStatus('Offline');
-          return false;
-        } finally {
-          setTimeout(() => { isMutatingRef.current = false; }, 300);
-        }
-      }, []);
-
-      const pushRoomConfig = useCallback(async (nextConfig) => {
-        const baseUrl = getCleanFirebaseBaseUrl();
-        if (!baseUrl) return true;
-        isMutatingRef.current = true;
-        try {
-          const res = await fetch(`${baseUrl}/greenStayNegombo/roomConfig.json`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(nextConfig)
-          });
-          if (res.ok) {
-            setSyncStatus('Live');
-            return true;
-          }
-          setSyncStatus('Error');
-          return false;
-        } catch (err) {
-          setSyncStatus('Offline');
-          return false;
-        } finally {
-          setTimeout(() => { isMutatingRef.current = false; }, 300);
-        }
-      }, []);
-
-      // Fetch latest server state and replace local state cleanly (server is source of truth)
-      const pullFromServer = useCallback(async () => {
-        const baseUrl = getCleanFirebaseBaseUrl();
-        if (!baseUrl) {
-          setSyncStatus('Local');
-          return null;
-        }
-        if (isMutatingRef.current) return null;
-
-        try {
-          const res = await fetch(`${baseUrl}/greenStayNegombo.json?t=${Date.now()}`, {
-            cache: 'no-store'
-          });
-          if (!res.ok) throw new Error('Network error');
-          const data = await res.json();
-
-          if (isMutatingRef.current) return null;
-
-          const remoteBookings = firebaseCollectionToArray(data?.bookings)
-            .map(b => ({ ...b, source: normalizeSource(b.source) }));
-          const remoteExpenses = firebaseCollectionToArray(data?.expenses);
-          const remoteRequests = firebaseCollectionToArray(data?.deleteRequests);
-          const remoteRooms = data?.roomConfig && typeof data.roomConfig === 'object'
-            ? data.roomConfig
-            : DEFAULT_ROOM_CONFIG;
-
-          setBookings(prev => JSON.stringify(prev) === JSON.stringify(remoteBookings) ? prev : remoteBookings);
-          setExpenses(prev => JSON.stringify(prev) === JSON.stringify(remoteExpenses) ? prev : remoteExpenses);
-          setDeleteRequests(prev => JSON.stringify(prev) === JSON.stringify(remoteRequests) ? prev : remoteRequests);
-          setRoomConfig(prev => JSON.stringify(prev) === JSON.stringify(remoteRooms) ? prev : remoteRooms);
-
-          setSyncStatus('Live');
-          return { remoteBookings, remoteExpenses, remoteRequests, remoteRooms };
-        } catch (err) {
-          setSyncStatus('Offline');
-          return null;
-        }
-      }, []);
-
-      useEffect(() => {
-        const baseUrl = getCleanFirebaseBaseUrl();
-        if (!baseUrl) {
-          setSyncStatus('Local');
-          return;
-        }
-        let cancelled = false;
-        const tick = async () => {
-          if (!cancelled) await pullFromServer();
-        };
-        tick();
-        const intervalId = setInterval(tick, 3000);
-        return () => {
-          cancelled = true;
-          clearInterval(intervalId);
-        };
-      }, [pullFromServer]);
-
-      useEffect(() => {
-        if (!isAdmin && (tab === 'add' || tab === 'bookings' || tab === 'expenses' || tab === 'rooms')) {
-          setTab('dashboard');
-        }
-      }, [isAdmin, tab]);
-
-      const findOverbookingConflict = (candidateBooking, ignoreBookingId = null, referenceBookings = bookings) => {
-        const { start, end } = getBookingDateRange(candidateBooking);
-        const datesToCheck = getDatesInRange(start, end);
-
-        const requestedByType = {};
-        const selections = Array.isArray(candidateBooking.roomSelections) && candidateBooking.roomSelections.length > 0
-          ? candidateBooking.roomSelections
-          : [{ roomType: candidateBooking.roomType || defaultRoomKey, qty: Number(candidateBooking.roomQty) || 1 }];
-
-        selections.forEach(item => {
-          const rType = item.roomType || defaultRoomKey;
-          const q = Math.max(1, Number(item.qty) || 1);
-          requestedByType[rType] = (requestedByType[rType] || 0) + q;
-        });
-
-        for (const iso of datesToCheck) {
-          const dayBookings = referenceBookings.filter(b => b.id !== ignoreBookingId && bookingCoversDate(b, iso));
-          for (const [rType, reqQty] of Object.entries(requestedByType)) {
-            const maxCapacity = Number(roomConfig[rType]?.total ?? 0);
-            const alreadyBooked = dayBookings.reduce((sum, b) => sum + getBookingRoomCount(b, rType), 0);
-            if (alreadyBooked + reqQty > maxCapacity) {
-              const label = roomConfig[rType]?.label || rType;
-              const availableLeft = Math.max(0, maxCapacity - alreadyBooked);
-              return `${iso} දිනට ${label} සඳහා ඉතිරිව ඇත්තේ ${availableLeft}/${maxCapacity} පමණි. Overbooking කළ නොහැක!`;
-            }
-          }
-        }
-        return null;
-      };
-
-      const handleRoleButtonClick = () => {
-        if (role !== 'view') {
-          setRole('view');
-        } else {
-          setPinInput('');
-          setPinError('');
-          setShowPinModal(true);
-        }
-      };
-
-      const handleVerifyPin = (e) => {
-        e.preventDefault();
-        const trimmed = pinInput.trim();
-        if (trimmed === OWNER_PIN) {
-          setRole('owner');
-          localStorage.setItem('gs_user_role_v1', 'owner');
-          setShowPinModal(false);
-          setPinInput('');
-          setPinError('');
-        } else if (trimmed === ADMIN_PIN) {
-          setRole('admin');
-          localStorage.setItem('gs_user_role_v1', 'admin');
-          setShowPinModal(false);
-          setPinInput('');
-          setPinError('');
-        } else {
-          setPinError('PIN අංකය වැරදියි. නැවත උත්සාහ කරන්න.');
-        }
-      };
-
-      const adjustRoomCount = async (key, delta) => {
-        if (!isAdmin) return;
-        const current = roomConfig[key];
-        if (!current) return;
-        const nextTotal = Math.max(0, Number(current.total || 0) + delta);
-        const nextConfig = {
-          ...roomConfig,
-          [key]: { ...current, total: nextTotal }
-        };
-        setRoomConfig(nextConfig);
-        await pushRoomConfig(nextConfig);
-      };
-
-      const handleAddRoomType = async (e) => {
-        e.preventDefault();
-        if (!isAdmin) return;
-        const cleanName = newRoomName.trim();
-        const count = Math.max(0, Number(newRoomTotal) || 0);
-        if (!cleanName) return alert('කරුණාකර Room වර්ගයේ නම ඇතුළත් කරන්න.');
-        if (roomConfig[cleanName]) return alert('මෙම Room වර්ගය දැනටමත් පවතී.');
-
-        const style = EXTRA_STYLES[Object.keys(roomConfig).length % EXTRA_STYLES.length];
-        const nextConfig = {
-          ...roomConfig,
-          [cleanName]: {
-            label: cleanName,
-            total: count,
-            color: style.color,
-            soft: style.soft
-          }
-        };
-        setRoomConfig(nextConfig);
-        await pushRoomConfig(nextConfig);
-        setNewRoomName('');
-        setNewRoomTotal('1');
-      };
-
-      const updateFormRoomSelection = (index, field, value) => {
-        setFormData(prev => {
-          const updated = [...prev.roomSelections];
-          updated[index] = {
-            ...updated[index],
-            [field]: field === 'qty' ? Math.max(1, Number(value) || 1) : value
-          };
-          return { ...prev, roomSelections: updated };
-        });
-      };
-
-      const addFormRoomRow = () => {
-        setFormData(prev => ({
-          ...prev,
-          roomSelections: [...prev.roomSelections, { roomType: defaultRoomKey, qty: 1 }]
-        }));
-      };
-
-      const removeFormRoomRow = (index) => {
-        setFormData(prev => {
-          if (prev.roomSelections.length <= 1) return prev;
-          return {
-            ...prev,
-            roomSelections: prev.roomSelections.filter((_, idx) => idx !== index)
-          };
-        });
-      };
-
-      const updateEditRoomSelection = (index, field, value) => {
-        setEditingBooking(prev => {
-          const list = Array.isArray(prev.roomSelections) && prev.roomSelections.length > 0
-            ? [...prev.roomSelections]
-            : [{ roomType: prev.roomType || defaultRoomKey, qty: Number(prev.roomQty) || 1 }];
-          list[index] = {
-            ...list[index],
-            [field]: field === 'qty' ? Math.max(1, Number(value) || 1) : value
-          };
-          return { ...prev, roomSelections: list, roomType: list[0].roomType };
-        });
-      };
-
-      const addEditRoomRow = () => {
-        setEditingBooking(prev => {
-          const list = Array.isArray(prev.roomSelections) && prev.roomSelections.length > 0
-            ? [...prev.roomSelections]
-            : [{ roomType: prev.roomType || defaultRoomKey, qty: Number(prev.roomQty) || 1 }];
-          list.push({ roomType: defaultRoomKey, qty: 1 });
-          return { ...prev, roomSelections: list };
-        });
-      };
-
-      const removeEditRoomRow = (index) => {
-        setEditingBooking(prev => {
-          const list = Array.isArray(prev.roomSelections) ? prev.roomSelections : [];
-          if (list.length <= 1) return prev;
-          const filtered = list.filter((_, idx) => idx !== index);
-          return { ...prev, roomSelections: filtered, roomType: filtered[0].roomType };
-        });
-      };
-
-      const handleAddBooking = async (e) => {
-        e.preventDefault();
-        if (!isAdmin) return;
-        if (!formData.guest.trim() || !formData.price) {
-          return alert('කරුණාකර Guest Name සහ Price ඇතුළත් කරන්න.');
-        }
-
-        const latest = await pullFromServer();
-        const baseList = latest ? latest.remoteBookings : bookings;
-
-        const isCustom = formData.type === 'Custom Time';
-        const effectiveDate = isCustom && formData.customCheckInDate ? formData.customCheckInDate : formData.date;
-        const cleanSelections = formData.roomSelections.map(item => ({
-          roomType: item.roomType || defaultRoomKey,
-          qty: Math.max(1, Number(item.qty) || 1)
-        }));
-        const totalQty = cleanSelections.reduce((sum, item) => sum + item.qty, 0);
-
-        const newBooking = {
-          id: Date.now(),
-          guest: formData.guest.trim(),
-          price: Number(formData.price),
-          advance: Number(formData.advance) || 0,
-          source: normalizeSource(formData.source),
-          notes: formData.notes.trim(),
-          roomType: cleanSelections[0]?.roomType || defaultRoomKey,
-          roomQty: totalQty,
-          roomSelections: cleanSelections,
-          type: formData.type,
-          customCheckInDate: isCustom ? (formData.customCheckInDate || effectiveDate) : '',
-          customCheckInTime: isCustom ? formData.customCheckInTime : '',
-          customCheckOutDate: isCustom ? (formData.customCheckOutDate || formData.customCheckInDate || effectiveDate) : '',
-          customCheckOutTime: isCustom ? formData.customCheckOutTime : '',
-          date: effectiveDate,
-          status: 'pending'
-        };
-
-        const conflictMessage = findOverbookingConflict(newBooking, null, baseList);
-        if (conflictMessage) {
-          return alert(conflictMessage);
-        }
-
-        setBookings([newBooking, ...baseList]);
-        await upsertRecord('bookings', newBooking.id, newBooking);
-
-        setFormData({
-          guest: '',
-          price: '',
-          advance: '',
-          source: 'Nirmal',
-          notes: '',
-          roomSelections: [{ roomType: defaultRoomKey, qty: 1 }],
-          type: 'Day Out',
-          customCheckInDate: todayISO(),
-          customCheckInTime: '',
-          customCheckOutDate: todayISO(),
-          customCheckOutTime: '',
-          date: todayISO()
-        });
-        setBookingFilterMonth(newBooking.date.slice(0, 7));
-        setTab('bookings');
-      };
-
-      const handleSaveEdit = async (e) => {
-        e.preventDefault();
-        if (!isAdmin) return;
-        if (!editingBooking.guest.trim() || editingBooking.price === '') {
-          return alert('කරුණාකර Guest Name සහ Price ඇතුළත් කරන්න.');
-        }
-
-        const latest = await pullFromServer();
-        const baseList = latest ? latest.remoteBookings : bookings;
-
-        const isCustom = editingBooking.type === 'Custom Time';
-        const effectiveDate = isCustom && editingBooking.customCheckInDate ? editingBooking.customCheckInDate : editingBooking.date;
-        const cleanSelections = Array.isArray(editingBooking.roomSelections) && editingBooking.roomSelections.length > 0
-          ? editingBooking.roomSelections.map(item => ({
-              roomType: item.roomType || defaultRoomKey,
-              qty: Math.max(1, Number(item.qty) || 1)
-            }))
-          : [{ roomType: editingBooking.roomType || defaultRoomKey, qty: Math.max(1, Number(editingBooking.roomQty) || 1) }];
-        const totalQty = cleanSelections.reduce((sum, item) => sum + item.qty, 0);
-
-        const updatedBooking = {
-          ...editingBooking,
-          guest: editingBooking.guest.trim(),
-          price: Number(editingBooking.price),
-          advance: Number(editingBooking.advance) || 0,
-          source: normalizeSource(editingBooking.source),
-          notes: (editingBooking.notes || '').trim(),
-          roomType: cleanSelections[0]?.roomType || defaultRoomKey,
-          roomQty: totalQty,
-          roomSelections: cleanSelections,
-          customCheckInDate: isCustom ? (editingBooking.customCheckInDate || effectiveDate) : '',
-          customCheckInTime: isCustom ? (editingBooking.customCheckInTime || '') : '',
-          customCheckOutDate: isCustom ? (editingBooking.customCheckOutDate || editingBooking.customCheckInDate || effectiveDate) : '',
-          customCheckOutTime: isCustom ? (editingBooking.customCheckOutTime || '') : '',
-          date: effectiveDate
-        };
-
-        const conflictMessage = findOverbookingConflict(updatedBooking, editingBooking.id, baseList);
-        if (conflictMessage) {
-          return alert(conflictMessage);
-        }
-
-        const exists = baseList.some(b => String(b.id) === String(editingBooking.id));
-        const nextList = exists
-          ? baseList.map(b => (String(b.id) === String(editingBooking.id) ? updatedBooking : b))
-          : [updatedBooking, ...baseList];
-
-        setBookings(nextList);
-        await upsertRecord('bookings', updatedBooking.id, updatedBooking);
-        setEditingBooking(null);
-      };
-
-      const selectAttendanceStatus = async (id, status) => {
-        if (!isAdmin) return;
-        const target = bookings.find(b => String(b.id) === String(id));
-        if (!target) return;
-        const updated = { ...target, status };
-        setBookings(bookings.map(b => (String(b.id) === String(id) ? updated : b)));
-        await upsertRecord('bookings', updated.id, updated);
-      };
-
-      const toggleAttendanceBadge = async (id, currentStatus) => {
-        if (!isAdmin) return;
-        const nextStatus = currentStatus === 'arrived' ? 'not_arrived' : 'arrived';
-        const target = bookings.find(b => String(b.id) === String(id));
-        if (!target) return;
-        const updated = { ...target, status: nextStatus };
-        setBookings(bookings.map(b => (String(b.id) === String(id) ? updated : b)));
-        await upsertRecord('bookings', updated.id, updated);
-      };
-
-      const openDeleteRequestModal = (booking) => {
-        setRequestingDeleteBooking(booking);
-        setDeleteReason('');
-      };
-
-      const handleSubmitDeleteRequest = async (e) => {
-        e.preventDefault();
-        if (!isAdmin || !requestingDeleteBooking) return;
-
-        const latest = await pullFromServer();
-        const baseRequests = latest ? latest.remoteRequests : deleteRequests;
-
-        const alreadyRequested = baseRequests.some(r => String(r.bookingId) === String(requestingDeleteBooking.id));
-        if (alreadyRequested) {
-          alert('මෙම Booking එක සඳහා Delete Request එකක් දැනටමත් Owner වෙත යවා ඇත.');
-          setRequestingDeleteBooking(null);
-          return;
-        }
-
-        const newReq = {
-          id: Date.now(),
-          bookingId: requestingDeleteBooking.id,
-          requestedBy: 'Admin',
-          requestedAt: new Date().toLocaleString('si-LK'),
-          reason: deleteReason.trim() || 'හේතුවක් සඳහන් කර නැත',
-          snapshot: {
-            guest: requestingDeleteBooking.guest,
-            date: requestingDeleteBooking.date,
-            rooms: formatBookingRoomsText(requestingDeleteBooking),
-            price: Number(requestingDeleteBooking.price) || 0,
-            source: normalizeSource(requestingDeleteBooking.source)
-          }
-        };
-
-        setDeleteRequests([newReq, ...baseRequests]);
-        await upsertRecord('deleteRequests', newReq.id, newReq);
-        setRequestingDeleteBooking(null);
-        setDeleteReason('');
-        alert('Delete Request එක Owner වෙත යවන ලදී. Owner approve කළ පසු delete වනු ඇත.');
-      };
-
-      const ownerDeleteBooking = async (id) => {
-        if (!isOwner) return;
-        if (confirm('Owner ලෙස මෙම Booking එක සම්පූර්ණයෙන්ම ඉවත් කිරීමට අවශ්‍යද?')) {
-          const matchingReqs = deleteRequests.filter(r => String(r.bookingId) === String(id));
-          setBookings(prev => prev.filter(b => String(b.id) !== String(id)));
-          setDeleteRequests(prev => prev.filter(r => String(r.bookingId) !== String(id)));
-          await deleteRecordById('bookings', id);
-          for (const r of matchingReqs) {
-            await deleteRecordById('deleteRequests', r.id);
-          }
-        }
-      };
-
-      const handleApproveDeleteRequest = async (req) => {
-        if (!isOwner) return;
-        setBookings(prev => prev.filter(b => String(b.id) !== String(req.bookingId)));
-        setDeleteRequests(prev => prev.filter(r => String(r.id) !== String(req.id)));
-        await deleteRecordById('bookings', req.bookingId);
-        await deleteRecordById('deleteRequests', req.id);
-      };
-
-      const handleRejectDeleteRequest = async (reqId) => {
-        if (!isOwner) return;
-        setDeleteRequests(prev => prev.filter(r => String(r.id) !== String(reqId)));
-        await deleteRecordById('deleteRequests', reqId);
-      };
-
-      const handleAddExpense = async (e) => {
-        e.preventDefault();
-        if (!isAdmin) return;
-        if (!expForm.title.trim() || !expForm.amount) {
-          return alert('කරුණාකර වියදම් විස්තරය සහ මුදල ඇතුළත් කරන්න.');
-        }
-
-        const latest = await pullFromServer();
-        const baseExpenses = latest ? latest.remoteExpenses : expenses;
-
-        const newExpense = {
-          id: Date.now(),
-          title: expForm.title.trim(),
-          amount: Number(expForm.amount),
-          date: expForm.date
-        };
-
-        setExpenses([newExpense, ...baseExpenses]);
-        await upsertRecord('expenses', newExpense.id, newExpense);
-        setExpenseFilterMonth(newExpense.date.slice(0, 7));
-        setExpForm({
-          title: '',
-          amount: '',
-          date: todayISO()
-        });
-      };
-
-      const handleSaveExpenseEdit = async (e) => {
-        e.preventDefault();
-        if (!isAdmin) return;
-        if (!editingExpense.title.trim() || editingExpense.amount === '') {
-          return alert('කරුණාකර වියදම් විස්තරය සහ මුදල ඇතුළත් කරන්න.');
-        }
-
-        const latest = await pullFromServer();
-        const baseExpenses = latest ? latest.remoteExpenses : expenses;
-
-        const cleanedItem = {
-          ...editingExpense,
-          title: editingExpense.title.trim(),
-          amount: Number(editingExpense.amount),
-          date: editingExpense.date
-        };
-
-        const exists = baseExpenses.some(ex => String(ex.id) === String(editingExpense.id));
-        const nextExpenses = exists
-          ? baseExpenses.map(ex => (String(ex.id) === String(editingExpense.id) ? cleanedItem : ex))
-          : [cleanedItem, ...baseExpenses];
-
-        setExpenses(nextExpenses);
-        await upsertRecord('expenses', cleanedItem.id, cleanedItem);
-        setEditingExpense(null);
-      };
-
-      const deleteExpense = async (id) => {
-        if (!isAdmin) return;
-        if (confirm('මෙම වියදම ඉවත් කිරීමට අවශ්‍යද?')) {
-          setExpenses(prev => prev.filter(ex => String(ex.id) !== String(id)));
-          await deleteRecordById('expenses', id);
-        }
-      };
-
-      const totalRoomsCapacity = useMemo(() => {
-        return Object.values(roomConfig).reduce((sum, r) => sum + (Number(r.total) || 0), 0);
-      }, [roomConfig]);
-
-      const today = todayISO();
-      const todayBookings = bookings.filter(b => bookingCoversDate(b, today));
-      const todayDayOut = todayBookings
-        .filter(b => b.type === 'Day Out')
-        .reduce((sum, b) => sum + getBookingRoomCount(b), 0);
-      const todayNightOut = todayBookings
-        .filter(b => b.type === 'Night Out' || b.type === '1 Night Standard')
-        .reduce((sum, b) => sum + getBookingRoomCount(b), 0);
-
-      const calendarDays = useMemo(() => {
-        const firstDay = new Date(calYear, calMonth, 1).getDay();
-        const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
-        const cells = [];
-        for (let i = 0; i < firstDay; i++) cells.push(null);
-        for (let d = 1; d <= daysInMonth; d++) {
-          const iso = `${calYear}-${String(calMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-          cells.push({ day: d, iso });
-        }
-        return cells;
-      }, [calYear, calMonth]);
-
-      const selectedDateBookings = bookings.filter(b => bookingCoversDate(b, selectedCalDate));
-
-      const selectedDateAvailability = useMemo(() => {
-        const entries = Object.entries(roomConfig);
-        const orderedEntries = [
-          ...entries.filter(([k]) => k === 'Cabana'),
-          ...entries.filter(([k]) => k !== 'Cabana').slice(0, 3)
-        ];
-        return orderedEntries.map(([key, info]) => {
-          const total = Number(info.total) || 0;
-          const booked = selectedDateBookings.reduce((sum, b) => sum + getBookingRoomCount(b, key), 0);
-          const available = Math.max(0, total - booked);
-          return {
-            key,
-            label: info.label,
-            available,
-            soft: info.soft
-          };
-        });
-      }, [roomConfig, selectedDateBookings]);
-
-      const monthlyBookings = useMemo(() => {
-        return bookings
-          .filter(b => b.date && b.date.startsWith(bookingFilterMonth))
-          .sort((a, b) => a.date.localeCompare(b.date));
-      }, [bookings, bookingFilterMonth]);
-
-      const bookingStats = useMemo(() => {
-        const arrivedList = monthlyBookings.filter(b => b.status === 'arrived');
-        const notArrivedList = monthlyBookings.filter(b => b.status === 'not_arrived');
-        const arrivedTotal = arrivedList.reduce((sum, b) => sum + (Number(b.price) || 0), 0);
-        const notArrivedTotal = notArrivedList.reduce((sum, b) => sum + (Number(b.price) || 0), 0);
-        const allTotal = monthlyBookings.reduce((sum, b) => sum + (Number(b.price) || 0), 0);
-        const allAdvanceTotal = monthlyBookings.reduce((sum, b) => sum + (Number(b.advance) || 0), 0);
-
-        const bySource = {};
-        SOURCE_OPTIONS.forEach(src => {
-          const list = monthlyBookings.filter(b => normalizeSource(b.source) === src);
-          const sourceTotal = list.reduce((sum, b) => sum + (Number(b.price) || 0), 0);
-          const advanceTotal = list.reduce((sum, b) => sum + (Number(b.advance) || 0), 0);
-          const arrivedSrcTotal = list
-            .filter(b => b.status === 'arrived')
-            .reduce((sum, b) => sum + (Number(b.price) || 0), 0);
-          const notArrivedSrcTotal = list
-            .filter(b => b.status === 'not_arrived')
-            .reduce((sum, b) => sum + (Number(b.price) || 0), 0);
-          bySource[src] = { sourceTotal, advanceTotal, arrivedSrcTotal, notArrivedSrcTotal };
-        });
-
-        return {
-          arrivedCount: arrivedList.length,
-          arrivedTotal,
-          notArrivedCount: notArrivedList.length,
-          notArrivedTotal,
-          allTotal,
-          allAdvanceTotal,
-          bySource
-        };
-      }, [monthlyBookings]);
-
-      const monthlyExpenses = useMemo(() => {
-        return expenses
-          .filter(ex => ex.date && ex.date.startsWith(expenseFilterMonth))
-          .sort((a, b) => b.date.localeCompare(a.date));
-      }, [expenses, expenseFilterMonth]);
-
-      const monthlyExpenseTotal = useMemo(() => {
-        return monthlyExpenses.reduce((sum, ex) => sum + (Number(ex.amount) || 0), 0);
-      }, [monthlyExpenses]);
-
-      const changeCalMonth = (delta) => {
-        let m = calMonth + delta;
-        let y = calYear;
-        if (m < 0) { m = 11; y -= 1; }
-        if (m > 11) { m = 0; y += 1; }
-        setCalMonth(m);
-        setCalYear(y);
-      };
-
-      const renderPackageText = (b) => {
-        if (b.type === 'Custom Time') {
-          const ciDate = b.customCheckInDate || b.date || '';
-          const ciTime = b.customCheckInTime || '--:--';
-          const coDate = b.customCheckOutDate || b.customCheckInDate || b.date || '';
-          const coTime = b.customCheckOutTime || '--:--';
-          return `Custom (${ciDate} ${ciTime} → ${coDate} ${coTime})`;
-        }
-        return b.type;
-      };
-
-      const renderBookingCard = (b, showDeleteControl = true) => {
-        const isDecided = b.status === 'arrived' || b.status === 'not_arrived';
-        const adv = Number(b.advance) || 0;
-        const price = Number(b.price) || 0;
-        const balance = Math.max(0, price - adv);
-        const srcLabel = normalizeSource(b.source);
-        const hasPendingDeleteReq = deleteRequests.some(r => String(r.bookingId) === String(b.id));
-
-        return (
-          <div key={b.id} className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm space-y-2">
-            <div className="flex justify-between items-start">
-              <div>
-                <p className="text-sm font-bold text-slate-800">{b.guest}</p>
-                <p className="text-xs text-slate-500">{b.date} • {formatBookingRoomsText(b)} • {renderPackageText(b)}</p>
-                <p className="text-xs text-slate-600 mt-0.5">කාණ්ඩය: <span className="font-semibold">{srcLabel}</span></p>
-                {adv > 0 && (
-                  <p className="text-xs text-sky-700 mt-0.5">
-                    Advance: <span className="font-bold">Rs. {adv.toLocaleString()}</span> • ඉතිරි: <span className="font-semibold">Rs. {balance.toLocaleString()}</span>
-                  </p>
-                )}
-                {b.notes && <p className="text-xs text-slate-600 mt-1 bg-slate-50 px-2 py-1 rounded">සටහන: {b.notes}</p>}
-                {hasPendingDeleteReq && (
-                  <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded mt-1 inline-block font-semibold">
-                    Delete Request Pending (Owner Approval)
-                  </p>
-                )}
-              </div>
-              <div className="text-right">
-                <p className="text-sm font-bold text-emerald-700">Rs. {price.toLocaleString()}</p>
-                {b.status === 'arrived' && (
-                  <button
-                    type="button"
-                    disabled={!isAdmin}
-                    onClick={() => toggleAttendanceBadge(b.id, b.status)}
-                    title={isAdmin ? 'ඔබා වෙනස් කරන්න' : ''}
-                    className={`inline-block mt-1 text-[11px] px-2 py-0.5 rounded-full font-semibold bg-emerald-100 text-emerald-800 ${
-                      isAdmin ? 'cursor-pointer hover:bg-emerald-200 active:scale-95 transition' : ''
-                    }`}
-                  >
-                    පැමිණියා
-                  </button>
-                )}
-                {b.status === 'not_arrived' && (
-                  <button
-                    type="button"
-                    disabled={!isAdmin}
-                    onClick={() => toggleAttendanceBadge(b.id, b.status)}
-                    title={isAdmin ? 'ඔබා වෙනස් කරන්න' : ''}
-                    className={`inline-block mt-1 text-[11px] px-2 py-0.5 rounded-full font-semibold bg-rose-100 text-rose-800 ${
-                      isAdmin ? 'cursor-pointer hover:bg-rose-200 active:scale-95 transition' : ''
-                    }`}
-                  >
-                    නොපැමිණි
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {isAdmin && !isDecided && (
-              <div className="flex gap-2 pt-2 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => selectAttendanceStatus(b.id, 'arrived')}
-                  className="flex-1 py-1.5 rounded-lg text-xs font-semibold border bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 flex items-center justify-center gap-1"
-                >
-                  <i className="fa-solid fa-check"></i> පැමිණියා
-                </button>
-                <button
-                  type="button"
-                  onClick={() => selectAttendanceStatus(b.id, 'not_arrived')}
-                  className="flex-1 py-1.5 rounded-lg text-xs font-semibold border bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100 flex items-center justify-center gap-1"
-                >
-                  <i className="fa-solid fa-xmark"></i> නොපැමිණි
-                </button>
-              </div>
-            )}
-
-            {isAdmin && (
-              <div className="flex items-center justify-end gap-2 pt-1.5 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setEditingBooking({
-                    ...b,
-                    source: normalizeSource(b.source),
-                    roomSelections: Array.isArray(b.roomSelections) && b.roomSelections.length > 0
-                      ? b.roomSelections
-                      : [{ roomType: b.roomType || defaultRoomKey, qty: Number(b.roomQty) || 1 }]
-                  })}
-                  className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 flex items-center gap-1"
-                >
-                  <i className="fa-solid fa-pen"></i> Edit
-                </button>
-
-                {showDeleteControl && isOwner && (
-                  <button
-                    type="button"
-                    onClick={() => ownerDeleteBooking(b.id)}
-                    className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 flex items-center gap-1"
-                    title="Delete Booking"
-                  >
-                    <i className="fa-solid fa-trash"></i> Delete
-                  </button>
-                )}
-
-                {showDeleteControl && role === 'admin' && (
-                  <button
-                    type="button"
-                    disabled={hasPendingDeleteReq}
-                    onClick={() => openDeleteRequestModal(b)}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold border flex items-center gap-1 ${
-                      hasPendingDeleteReq
-                        ? 'bg-amber-50 text-amber-700 border-amber-200 opacity-75 cursor-not-allowed'
-                        : 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'
-                    }`}
-                  >
-                    <i className="fa-solid fa-paper-plane"></i> {hasPendingDeleteReq ? 'Requested' : 'Request Delete'}
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        );
-      };
-
-      const roleBadgeText = role === 'owner' ? 'Owner' : role === 'admin' ? 'Admin' : 'View';
-      const roleBadgeStyle = role === 'owner'
-        ? 'bg-amber-400 text-slate-900 border-amber-300'
-        : role === 'admin'
-        ? 'bg-sky-300 text-slate-900 border-sky-200'
-        : 'bg-emerald-800 text-emerald-200 border-emerald-600 hover:bg-emerald-900';
-
-      return (
-        <div className="max-w-md mx-auto bg-white min-h-screen shadow-xl relative pb-20">
-          {/* Header */}
-          <header className="bg-emerald-700 text-white p-4 sticky top-0 z-10 flex justify-between items-center shadow-md">
-            <div>
-              <h1 className="text-lg font-bold">Green Stay Negombo</h1>
-              <p className="text-xs text-emerald-100">
-                කාමර වෙන්කිරීම් කළමනාකරු • {syncStatus}
-                {isOwner && deleteRequests.length > 0 ? ` • Requests (${deleteRequests.length})` : ''}
-              </p>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => pullFromServer()}
-                title="Refresh Data"
-                className="text-xs px-2.5 py-1.5 rounded-full bg-emerald-800 text-emerald-100 border border-emerald-600 hover:bg-emerald-900"
-              >
-                <i className="fa-solid fa-rotate"></i>
-              </button>
-              <button
-                type="button"
-                onClick={handleRoleButtonClick}
-                className={`text-xs px-3 py-1.5 rounded-full border flex items-center gap-1.5 font-semibold transition ${roleBadgeStyle}`}
-              >
-                <i className={`fa-solid ${isAdmin ? 'fa-lock-open' : 'fa-lock'}`}></i>
-                <span>{roleBadgeText}</span>
-              </button>
-            </div>
-          </header>
-
-          {/* Content Body */}
-          <main className="p-4">
-            {/* 1. DASHBOARD TAB */}
-            {tab === 'dashboard' && (
-              <div className="space-y-4">
-                {isOwner && deleteRequests.length > 0 && (
-                  <div className="bg-amber-50 border border-amber-300 rounded-xl p-3.5 space-y-2.5 shadow-sm">
-                    <h2 className="text-xs font-bold text-amber-900 uppercase flex items-center gap-1.5">
-                      <i className="fa-solid fa-triangle-exclamation text-amber-600"></i>
-                      Delete Requests ({deleteRequests.length})
-                    </h2>
-                    {deleteRequests.map(req => (
-                      <div key={req.id} className="bg-white p-3 rounded-lg border border-amber-200 space-y-1.5">
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <p className="text-sm font-bold text-slate-800">{req.snapshot?.guest}</p>
-                            <p className="text-xs text-slate-500">
-                              {req.snapshot?.date} • {req.snapshot?.rooms} • {req.snapshot?.source}
-                            </p>
-                            <p className="text-xs text-slate-600 mt-1">
-                              හේතුව: <span className="font-semibold">{req.reason}</span>
-                            </p>
-                            <p className="text-[11px] text-slate-400">{req.requestedAt}</p>
-                          </div>
-                          <span className="text-xs font-bold text-emerald-700">
-                            Rs. {Number(req.snapshot?.price || 0).toLocaleString()}
-                          </span>
-                        </div>
-                        <div className="flex gap-2 pt-1.5 border-t border-slate-100">
-                          <button
-                            type="button"
-                            onClick={() => handleApproveDeleteRequest(req)}
-                            className="flex-1 py-1.5 rounded-lg text-xs font-bold bg-rose-600 text-white hover:bg-rose-700 flex items-center justify-center gap-1"
-                          >
-                            <i className="fa-solid fa-check"></i> Approve Delete
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleRejectDeleteRequest(req.id)}
-                            className="flex-1 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 flex items-center justify-center gap-1"
-                          >
-                            <i className="fa-solid fa-xmark"></i> Reject
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-xl text-center">
-                    <i className="fa-solid fa-sun text-emerald-600 text-xl mb-1"></i>
-                    <p className="text-xs text-slate-600">අද Day Out</p>
-                    <p className="text-2xl font-bold text-slate-800 mt-1">{todayDayOut} / {totalRoomsCapacity}</p>
-                  </div>
-                  <div className="bg-indigo-50 border border-indigo-200 p-4 rounded-xl text-center">
-                    <i className="fa-solid fa-moon text-indigo-600 text-xl mb-1"></i>
-                    <p className="text-xs text-slate-600">අද Night / Stay</p>
-                    <p className="text-2xl font-bold text-slate-800 mt-1">{todayNightOut} / {totalRoomsCapacity}</p>
-                  </div>
-                </div>
-
-                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
-                  <h2 className="text-xs font-bold text-slate-500 uppercase mb-2">කාමර ධාරිතාව (Rooms)</h2>
-                  <div className="grid grid-cols-2 gap-2">
-                    {Object.entries(roomConfig).map(([key, info]) => {
-                      const bookedToday = todayBookings.reduce((sum, b) => sum + getBookingRoomCount(b, key), 0);
-                      return (
-                        <div key={key} className={`p-2.5 rounded-lg border text-xs flex justify-between items-center ${info.soft}`}>
-                          <span className="font-semibold">{info.label}</span>
-                          <span className="font-bold">{bookedToday}/{info.total}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="bg-emerald-50/60 border border-emerald-100 rounded-xl p-3.5">
-                  <h2 className="text-sm font-bold text-emerald-900 mb-2.5 flex items-center gap-2">
-                    <i className="fa-solid fa-bell text-emerald-700"></i> ඊළඟ Booking සටහන්
-                  </h2>
-                  {bookings.filter(b => b.date >= today).length === 0 ? (
-                    <p className="text-xs text-slate-500 text-center py-4">ඉදිරි Bookings කිසිවක් නොමැත.</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {bookings
-                        .filter(b => b.date >= today)
-                        .sort((a, b) => a.date.localeCompare(b.date))
-                        .slice(0, 5)
-                        .map(b => (
-                          <div key={b.id} className="bg-white p-3 rounded-lg border border-slate-100 shadow-sm flex justify-between items-center">
-                            <div>
-                              <p className="text-sm font-bold text-slate-800">{b.guest} <span className="text-xs font-normal text-slate-500">({formatBookingRoomsText(b)})</span></p>
-                              <p className="text-xs text-slate-500">{b.date} • {renderPackageText(b)}</p>
-                            </div>
-                            <span className="text-xs font-bold text-emerald-700">Rs. {Number(b.price).toLocaleString()}</span>
-                          </div>
-                        ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* 2. CALENDAR TAB */}
-            {tab === 'calendar' && (
-              <div className="space-y-4">
-                <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm">
-                  <div className="flex justify-between items-center mb-3">
-                    <button onClick={() => changeCalMonth(-1)} className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-slate-700">
-                      <i className="fa-solid fa-chevron-left text-xs"></i>
-                    </button>
-                    <h2 className="text-sm font-bold text-slate-800">{calYear} {SI_MONTHS[calMonth]}</h2>
-                    <button onClick={() => changeCalMonth(1)} className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-slate-700">
-                      <i className="fa-solid fa-chevron-right text-xs"></i>
-                    </button>
-                  </div>
-
-                  <div className="grid grid-cols-7 gap-1 text-center mb-1">
-                    {SI_DAYS.map(d => (
-                      <div key={d} className="text-[11px] font-semibold text-slate-400 py-1">{d}</div>
-                    ))}
-                  </div>
-
-                  <div className="grid grid-cols-7 gap-1">
-                    {calendarDays.map((cell, idx) => {
-                      if (!cell) return <div key={idx} className="h-10"></div>;
-                      const count = bookings.filter(b => bookingCoversDate(b, cell.iso)).length;
-                      const isSelected = selectedCalDate === cell.iso;
-                      const isToday = today === cell.iso;
-                      return (
-                        <button
-                          key={cell.iso}
-                          onClick={() => setSelectedCalDate(cell.iso)}
-                          className={`h-10 rounded-lg flex flex-col items-center justify-center text-xs relative transition ${
-                            isSelected
-                              ? 'bg-emerald-700 text-white font-bold shadow'
-                              : isToday
-                              ? 'bg-emerald-50 text-emerald-800 font-bold border border-emerald-300'
-                              : 'hover:bg-slate-100 text-slate-700'
-                          }`}
-                        >
-                          <span>{cell.day}</span>
-                          {count > 0 && (
-                            <span className={`w-1.5 h-1.5 rounded-full mt-0.5 ${isSelected ? 'bg-amber-300' : 'bg-emerald-600'}`}></span>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="bg-white border border-slate-200 rounded-xl p-3.5 shadow-sm">
-                  <h3 className="text-xs font-bold text-slate-600 uppercase mb-2">
-                    <i className="fa-solid fa-door-open text-emerald-700 mr-1.5"></i>
-                    {selectedCalDate} Book කළ හැකි Rooms (Day Out / Night Out / Standard)
-                  </h3>
-                  <div className="grid grid-cols-2 gap-2">
-                    {selectedDateAvailability.map(item => (
-                      <div
-                        key={item.key}
-                        className={`p-2.5 rounded-lg border text-xs flex justify-between items-center ${
-                          item.available > 0 ? item.soft : 'bg-rose-50 text-rose-700 border-rose-200'
-                        }`}
-                      >
-                        <span className="font-semibold">{item.label}</span>
-                        {item.available > 0 ? (
-                          <span className="font-bold">{item.available} ඉතිරි</span>
-                        ) : (
-                          <span className="font-bold text-rose-600">නැත</span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5">
-                  <div className="flex justify-between items-center mb-3">
-                    <h3 className="text-sm font-bold text-slate-800">
-                      <i className="fa-regular fa-calendar-check text-emerald-700 mr-1.5"></i>
-                      {selectedCalDate} Bookings ({selectedDateBookings.length})
-                    </h3>
-                  </div>
-
-                  {selectedDateBookings.length === 0 ? (
-                    <p className="text-xs text-slate-500 text-center py-6">මෙම දිනයට Bookings කිසිවක් නොමැත.</p>
-                  ) : (
-                    <div className="space-y-2.5">
-                      {selectedDateBookings.map(b => renderBookingCard(b, true))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* 3. ADD BOOKING TAB */}
-            {tab === 'add' && isAdmin && (
-              <form onSubmit={handleAddBooking} className="space-y-3.5 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-                <h2 className="text-base font-bold text-slate-800 border-b pb-2">අලුත් Booking එකක්</h2>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Guest Name</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="අමුත්තාගේ නම"
-                    value={formData.guest}
-                    onChange={e => setFormData({ ...formData, guest: e.target.value })}
-                    className="w-full p-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-emerald-600"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">Price (Rs.)</label>
-                    <input
-                      type="number"
-                      required
-                      min="0"
-                      placeholder="මුදල (උදා: 15000)"
-                      value={formData.price}
-                      onChange={e => setFormData({ ...formData, price: e.target.value })}
-                      className="w-full p-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-emerald-600"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">Advance (Rs.)</label>
-                    <input
-                      type="number"
-                      min="0"
-                      placeholder="අත්තිකාරම්"
-                      value={formData.advance}
-                      onChange={e => setFormData({ ...formData, advance: e.target.value })}
-                      className="w-full p-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-emerald-600"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">කාණ්ඩය (Source)</label>
-                  <select
-                    value={formData.source}
-                    onChange={e => setFormData({ ...formData, source: e.target.value })}
-                    className="w-full p-2.5 text-sm border border-slate-300 rounded-lg bg-white"
-                  >
-                    {SOURCE_OPTIONS.map(src => (
-                      <option key={src} value={src}>{src}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">සටහන් (Notes)</label>
-                  <textarea
-                    rows="2"
-                    placeholder="විශේෂ සටහන් තිබේ නම් ඇතුළත් කරන්න..."
-                    value={formData.notes}
-                    onChange={e => setFormData({ ...formData, notes: e.target.value })}
-                    className="w-full p-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-emerald-600"
-                  ></textarea>
-                </div>
-
-                <div className="space-y-2 bg-slate-50 p-3 rounded-xl border border-slate-200">
-                  <div className="flex justify-between items-center">
-                    <label className="text-xs font-bold text-slate-700">Room Types & Quantity</label>
-                    <button
-                      type="button"
-                      onClick={addFormRoomRow}
-                      className="text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg hover:bg-emerald-100"
-                    >
-                      + තව Room එකක්
-                    </button>
-                  </div>
-
-                  {formData.roomSelections.map((item, idx) => (
-                    <div key={idx} className="grid grid-cols-12 gap-2 items-center">
-                      <div className="col-span-7">
-                        <select
-                          value={item.roomType}
-                          onChange={e => updateFormRoomSelection(idx, 'roomType', e.target.value)}
-                          className="w-full p-2 text-xs border border-slate-300 rounded-lg bg-white"
-                        >
-                          {roomKeys.map(r => (
-                            <option key={r} value={r}>{roomConfig[r]?.label || r}</option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="col-span-3">
-                        <input
-                          type="number"
-                          min="1"
-                          value={item.qty}
-                          onChange={e => updateFormRoomSelection(idx, 'qty', e.target.value)}
-                          className="w-full p-2 text-xs border border-slate-300 rounded-lg bg-white text-center font-bold"
-                          title="Quantity"
-                        />
-                      </div>
-                      <div className="col-span-2 flex justify-end">
-                        {formData.roomSelections.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => removeFormRoomRow(idx)}
-                            className="text-rose-600 hover:bg-rose-50 p-2 rounded-lg text-xs"
-                            title="Remove"
-                          >
-                            <i className="fa-solid fa-trash"></i>
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">දිනය (Date)</label>
-                    <input
-                      type="date"
-                      required
-                      value={formData.date}
-                      onChange={e => setFormData({ ...formData, date: e.target.value, customCheckInDate: e.target.value })}
-                      className="w-full p-2.5 text-sm border border-slate-300 rounded-lg"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">Package</label>
-                    <select
-                      value={formData.type}
-                      onChange={e => setFormData({
-                        ...formData,
-                        type: e.target.value,
-                        customCheckInDate: formData.customCheckInDate || formData.date,
-                        customCheckOutDate: formData.customCheckOutDate || formData.date
-                      })}
-                      className="w-full p-2.5 text-sm border border-slate-300 rounded-lg bg-white"
-                    >
-                      {PACKAGES.map(p => (
-                        <option key={p.id} value={p.id}>{p.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                {formData.type === 'Custom Time' && (
-                  <div className="space-y-3 bg-slate-50 p-3 rounded-xl border border-slate-200">
-                    <div>
-                      <p className="text-xs font-bold text-slate-700 mb-1.5">Check-in දිනය සහ වේලාව</p>
-                      <div className="grid grid-cols-2 gap-2">
-                        <input
-                          type="date"
-                          value={formData.customCheckInDate}
-                          onChange={e => setFormData({ ...formData, customCheckInDate: e.target.value, date: e.target.value })}
-                          className="w-full p-2 text-xs border border-slate-300 rounded-lg bg-white"
-                        />
-                        <input
-                          type="time"
-                          value={formData.customCheckInTime}
-                          onChange={e => setFormData({ ...formData, customCheckInTime: e.target.value })}
-                          className="w-full p-2 text-xs border border-slate-300 rounded-lg bg-white"
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <p className="text-xs font-bold text-slate-700 mb-1.5">Check-out දිනය සහ වේලාව</p>
-                      <div className="grid grid-cols-2 gap-2">
-                        <input
-                          type="date"
-                          value={formData.customCheckOutDate}
-                          onChange={e => setFormData({ ...formData, customCheckOutDate: e.target.value })}
-                          className="w-full p-2 text-xs border border-slate-300 rounded-lg bg-white"
-                        />
-                        <input
-                          type="time"
-                          value={formData.customCheckOutTime}
-                          onChange={e => setFormData({ ...formData, customCheckOutTime: e.target.value })}
-                          className="w-full p-2 text-xs border border-slate-300 rounded-lg bg-white"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                <button
-                  type="submit"
-                  className="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-3 rounded-xl shadow transition text-sm"
-                >
-                  <i className="fa-solid fa-plus mr-1.5"></i> Booking එක Save කරන්න
-                </button>
-              </form>
-            )}
-
-            {/* 4. BOOKINGS LIST TAB */}
-            {tab === 'bookings' && isAdmin && (
-              <div className="space-y-3.5">
-                <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-600">මාසය තෝරන්න:</span>
-                  <input
-                    type="month"
-                    value={bookingFilterMonth}
-                    onChange={e => setBookingFilterMonth(e.target.value)}
-                    className="text-xs font-bold border border-slate-300 rounded-lg px-2.5 py-1.5 text-slate-800"
-                  />
-                </div>
-
-                <div className="grid grid-cols-3 gap-2">
-                  <div className="bg-emerald-50 border border-emerald-200 p-2.5 rounded-xl text-center">
-                    <p className="text-[11px] font-semibold text-emerald-800">පැමිණි ({bookingStats.arrivedCount})</p>
-                    <p className="text-xs font-bold text-emerald-900 mt-1">Rs. {bookingStats.arrivedTotal.toLocaleString()}</p>
-                  </div>
-                  <div className="bg-rose-50 border border-rose-200 p-2.5 rounded-xl text-center">
-                    <p className="text-[11px] font-semibold text-rose-800">නොපැමිණි ({bookingStats.notArrivedCount})</p>
-                    <p className="text-xs font-bold text-rose-900 mt-1">Rs. {bookingStats.notArrivedTotal.toLocaleString()}</p>
-                  </div>
-                  <div className="bg-slate-800 text-white p-2.5 rounded-xl text-center">
-                    <p className="text-[11px] text-slate-300">මුළු එකතුව ({monthlyBookings.length})</p>
-                    <p className="text-xs font-bold text-amber-300 mt-1">Rs. {bookingStats.allTotal.toLocaleString()}</p>
-                  </div>
-                </div>
-
-                <div className="bg-sky-50 border border-sky-200 p-3 rounded-xl flex justify-between items-center">
-                  <span className="text-xs font-bold text-sky-900">මුළු Advance එකතුව</span>
-                  <span className="text-sm font-bold text-sky-900">Rs. {bookingStats.allAdvanceTotal.toLocaleString()}</span>
-                </div>
-
-                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
-                  <h3 className="text-xs font-bold text-slate-600">කාණ්ඩ අනුව Total & Advance එකතුව</h3>
-                  <div className="grid grid-cols-1 gap-2">
-                    {SOURCE_OPTIONS.map(src => {
-                      const s = bookingStats.bySource[src] || { sourceTotal: 0, advanceTotal: 0, arrivedSrcTotal: 0, notArrivedSrcTotal: 0 };
-                      return (
-                        <div key={src} className="bg-white p-2.5 rounded-lg border border-slate-200 space-y-1 text-xs">
-                          <div className="flex justify-between items-center">
-                            <span className="font-bold text-slate-800">{src}</span>
-                            <div className="flex gap-3">
-                              <span className="font-bold text-slate-900">Total: Rs. {s.sourceTotal.toLocaleString()}</span>
-                              <span className="font-bold text-sky-700">Advance: Rs. {s.advanceTotal.toLocaleString()}</span>
-                            </div>
-                          </div>
-                          <div className="flex gap-3 text-[11px]">
-                            <span className="font-semibold text-emerald-700">පැමිණි: Rs. {s.arrivedSrcTotal.toLocaleString()}</span>
-                            <span className="font-semibold text-rose-700">නොපැමිණි: Rs. {s.notArrivedSrcTotal.toLocaleString()}</span>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="space-y-2.5">
-                  <h3 className="text-xs font-bold text-slate-500 uppercase">
-                    {formatMonthLabel(bookingFilterMonth)} Bookings
-                  </h3>
-
-                  {monthlyBookings.length === 0 ? (
-                    <div className="bg-white p-6 rounded-xl border border-slate-200 text-center text-xs text-slate-500">
-                      මෙම මාසය සඳහා Bookings නොමැත.
-                    </div>
-                  ) : (
-                    monthlyBookings.map(b => renderBookingCard(b, true))
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* 5. EXPENSES TAB */}
-            {tab === 'expenses' && isAdmin && (
-              <div className="space-y-4">
-                <form onSubmit={handleAddExpense} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-3">
-                  <h2 className="text-sm font-bold text-slate-800 border-b pb-2">වියදමක් එකතු කරන්න (Add Expense)</h2>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">වියදම් විස්තරය</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="උදා: Lunch / Electricity / Cleaning"
-                      value={expForm.title}
-                      onChange={e => setExpForm({ ...expForm, title: e.target.value })}
-                      className="w-full p-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-emerald-600"
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">මුදල (Rs.)</label>
-                      <input
-                        type="number"
-                        required
-                        min="0"
-                        placeholder="උදා: 3500"
-                        value={expForm.amount}
-                        onChange={e => setExpForm({ ...expForm, amount: e.target.value })}
-                        className="w-full p-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-emerald-600"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">දිනය</label>
-                      <input
-                        type="date"
-                        required
-                        value={expForm.date}
-                        onChange={e => setExpForm({ ...expForm, date: e.target.value })}
-                        className="w-full p-2.5 text-sm border border-slate-300 rounded-lg"
-                      />
-                    </div>
-                  </div>
-                  <button
-                    type="submit"
-                    className="w-full bg-rose-600 hover:bg-rose-700 text-white font-bold py-2.5 rounded-xl text-sm shadow transition"
-                  >
-                    <i className="fa-solid fa-plus mr-1.5"></i> වියදම එකතු කරන්න
-                  </button>
-                </form>
-
-                <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-600">මාසය තෝරන්න:</span>
-                  <input
-                    type="month"
-                    value={expenseFilterMonth}
-                    onChange={e => setExpenseFilterMonth(e.target.value)}
-                    className="text-xs font-bold border border-slate-300 rounded-lg px-2.5 py-1.5 text-slate-800"
-                  />
-                </div>
-
-                <div className="bg-rose-50 border border-rose-200 p-4 rounded-xl flex justify-between items-center">
-                  <div>
-                    <p className="text-xs font-semibold text-rose-800">{formatMonthLabel(expenseFilterMonth)} මුළු වියදම්</p>
-                    <p className="text-[11px] text-rose-600">Total Expenses ({monthlyExpenses.length} items)</p>
-                  </div>
-                  <p className="text-lg font-bold text-rose-900">Rs. {monthlyExpenseTotal.toLocaleString()}</p>
-                </div>
-
-                <div className="space-y-2">
-                  {monthlyExpenses.length === 0 ? (
-                    <div className="bg-white p-6 rounded-xl border border-slate-200 text-center text-xs text-slate-500">
-                      මෙම මාසය සඳහා වියදම් සටහන් නොමැත.
-                    </div>
-                  ) : (
-                    monthlyExpenses.map(ex => (
-                      <div key={ex.id} className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex justify-between items-center">
-                        <div>
-                          <p className="text-sm font-bold text-slate-800">{ex.title}</p>
-                          <p className="text-xs text-slate-500">{ex.date}</p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-bold text-rose-700 mr-1">Rs. {Number(ex.amount).toLocaleString()}</span>
-                          <button
-                            type="button"
-                            onClick={() => setEditingExpense({ ...ex })}
-                            className="px-2 py-1 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 flex items-center gap-1"
-                            title="Edit"
-                          >
-                            <i className="fa-solid fa-pen"></i> Edit
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => deleteExpense(ex.id)}
-                            className="text-slate-400 hover:text-rose-600 px-1.5 py-1 text-xs"
-                            title="Delete"
-                          >
-                            <i className="fa-solid fa-trash"></i>
-                          </button>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* 6. ROOMS SETTINGS TAB */}
-            {tab === 'rooms' && isAdmin && (
-              <div className="space-y-4">
-                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-3">
-                  <h2 className="text-sm font-bold text-slate-800 border-b pb-2">කාමර ප්‍රමාණයන් වෙනස් කරන්න</h2>
-                  <div className="space-y-2">
-                    {Object.entries(roomConfig).map(([key, info]) => (
-                      <div key={key} className="flex items-center justify-between bg-slate-50 p-2.5 rounded-xl border border-slate-200">
-                        <div>
-                          <p className="text-sm font-bold text-slate-800">{info.label}</p>
-                          <p className="text-xs text-slate-500">ප්‍රමාණය: {info.total}</p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => adjustRoomCount(key, -1)}
-                            className="w-8 h-8 rounded-lg bg-white border border-slate-300 text-slate-700 font-bold flex items-center justify-center hover:bg-slate-100"
-                          >
-                            -
-                          </button>
-                          <span className="w-6 text-center text-sm font-bold">{info.total}</span>
-                          <button
-                            type="button"
-                            onClick={() => adjustRoomCount(key, 1)}
-                            className="w-8 h-8 rounded-lg bg-emerald-700 text-white font-bold flex items-center justify-center hover:bg-emerald-800"
-                          >
-                            +
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <form onSubmit={handleAddRoomType} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-3">
-                  <h2 className="text-sm font-bold text-slate-800 border-b pb-2">අලුත් Room වර්ගයක් Add කරන්න</h2>
-                  <div className="grid grid-cols-3 gap-2">
-                    <div className="col-span-2">
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">Room වර්ගයේ නම</label>
-                      <input
-                        type="text"
-                        required
-                        placeholder="උදා: Deluxe Room"
-                        value={newRoomName}
-                        onChange={e => setNewRoomName(e.target.value)}
-                        className="w-full p-2 text-sm border border-slate-300 rounded-lg"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">ගණන</label>
-                      <input
-                        type="number"
-                        required
-                        min="0"
-                        value={newRoomTotal}
-                        onChange={e => setNewRoomTotal(e.target.value)}
-                        className="w-full p-2 text-sm border border-slate-300 rounded-lg"
-                      />
-                    </div>
-                  </div>
-                  <button
-                    type="submit"
-                    className="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-2.5 rounded-xl text-sm shadow transition"
-                  >
-                    <i className="fa-solid fa-plus mr-1.5"></i> Room වර්ගය Add කරන්න
-                  </button>
-                </form>
-              </div>
-            )}
-          </main>
-
-          {/* PIN Modal */}
-          {showPinModal && (
-            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-              <form onSubmit={handleVerifyPin} className="bg-white w-full max-w-xs rounded-2xl p-4 space-y-3 shadow-2xl">
-                <div className="flex justify-between items-center border-b pb-2">
-                  <h3 className="text-sm font-bold text-slate-800">PIN ඇතුළත් කරන්න</h3>
-                  <button type="button" onClick={() => setShowPinModal(false)} className="text-slate-400 hover:text-slate-700">
-                    <i className="fa-solid fa-xmark"></i>
-                  </button>
-                </div>
-                <div>
-                  <input
-                    type="password"
-                    required
-                    autoFocus
-                    placeholder="Admin / Owner PIN"
-                    value={pinInput}
-                    onChange={e => setPinInput(e.target.value)}
-                    className="w-full p-2.5 text-sm border border-slate-300 rounded-lg"
-                  />
-                  {pinError && <p className="text-xs text-rose-600 mt-1">{pinError}</p>}
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setShowPinModal(false)}
-                    className="flex-1 py-2 rounded-xl border border-slate-300 text-xs font-semibold text-slate-700"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="flex-1 py-2 rounded-xl bg-emerald-700 text-white text-xs font-bold"
-                  >
-                    Unlock
-                  </button>
-                </div>
-              </form>
-            </div>
-          )}
-
-          {/* Admin Delete Request Modal */}
-          {requestingDeleteBooking && role === 'admin' && (
-            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-              <form onSubmit={handleSubmitDeleteRequest} className="bg-white w-full max-w-sm rounded-2xl p-4 space-y-3 shadow-2xl">
-                <div className="flex justify-between items-center border-b pb-2">
-                  <h3 className="text-sm font-bold text-slate-800">Owner වෙත Delete Request යවන්න</h3>
-                  <button type="button" onClick={() => setRequestingDeleteBooking(null)} className="text-slate-400 hover:text-slate-700">
-                    <i className="fa-solid fa-xmark"></i>
-                  </button>
-                </div>
-                <p className="text-xs text-slate-600">
-                  Booking: <span className="font-bold text-slate-800">{requestingDeleteBooking.guest}</span> ({requestingDeleteBooking.date})
-                </p>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Delete කිරීමට හේතුව</label>
-                  <textarea
-                    rows="2"
-                    placeholder="උදා: Guest cancelled / Duplicate booking"
-                    value={deleteReason}
-                    onChange={e => setDeleteReason(e.target.value)}
-                    className="w-full p-2 text-xs border border-slate-300 rounded-lg"
-                  ></textarea>
-                </div>
-                <div className="flex gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setRequestingDeleteBooking(null)}
-                    className="flex-1 py-2 rounded-xl border border-slate-300 text-xs font-semibold text-slate-700"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="flex-1 py-2 rounded-xl bg-amber-500 text-slate-900 text-xs font-bold"
-                  >
-                    Request යවන්න
-                  </button>
-                </div>
-              </form>
-            </div>
-          )}
-
-          {/* Edit Booking Modal */}
-          {editingBooking && isAdmin && (
-            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-              <form onSubmit={handleSaveEdit} className="bg-white w-full max-w-md rounded-2xl p-4 space-y-3 shadow-2xl max-h-[90vh] overflow-y-auto">
-                <div className="flex justify-between items-center border-b pb-2">
-                  <h3 className="text-sm font-bold text-slate-800">Booking Edit කරන්න</h3>
-                  <button type="button" onClick={() => setEditingBooking(null)} className="text-slate-400 hover:text-slate-700">
-                    <i className="fa-solid fa-xmark text-base"></i>
-                  </button>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Guest Name</label>
-                  <input
-                    type="text"
-                    required
-                    value={editingBooking.guest}
-                    onChange={e => setEditingBooking({ ...editingBooking, guest: e.target.value })}
-                    className="w-full p-2 text-sm border border-slate-300 rounded-lg"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">Price (Rs.)</label>
-                    <input
-                      type="number"
-                      required
-                      min="0"
-                      value={editingBooking.price}
-                      onChange={e => setEditingBooking({ ...editingBooking, price: e.target.value })}
-                      className="w-full p-2 text-sm border border-slate-300 rounded-lg"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">Advance (Rs.)</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={editingBooking.advance || ''}
-                      onChange={e => setEditingBooking({ ...editingBooking, advance: e.target.value })}
-                      className="w-full p-2 text-sm border border-slate-300 rounded-lg"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">කාණ්ඩය (Source)</label>
-                  <select
-                    value={normalizeSource(editingBooking.source)}
-                    onChange={e => setEditingBooking({ ...editingBooking, source: e.target.value })}
-                    className="w-full p-2 text-sm border border-slate-300 rounded-lg bg-white"
-                  >
-                    {SOURCE_OPTIONS.map(src => (
-                      <option key={src} value={src}>{src}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">සටහන් (Notes)</label>
-                  <textarea
-                    rows="2"
-                    value={editingBooking.notes || ''}
-                    onChange={e => setEditingBooking({ ...editingBooking, notes: e.target.value })}
-                    className="w-full p-2 text-sm border border-slate-300 rounded-lg"
-                  ></textarea>
-                </div>
-
-                <div className="space-y-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200">
-                  <div className="flex justify-between items-center">
-                    <label className="text-xs font-bold text-slate-700">Room Types & Quantity</label>
-                    <button
-                      type="button"
-                      onClick={addEditRoomRow}
-                      className="text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-lg"
-                    >
-                      + Room
-                    </button>
-                  </div>
-                  {(editingBooking.roomSelections || []).map((item, idx) => (
-                    <div key={idx} className="grid grid-cols-12 gap-2 items-center">
-                      <div className="col-span-7">
-                        <select
-                          value={item.roomType}
-                          onChange={e => updateEditRoomSelection(idx, 'roomType', e.target.value)}
-                          className="w-full p-1.5 text-xs border border-slate-300 rounded-lg bg-white"
-                        >
-                          {roomKeys.map(r => (
-                            <option key={r} value={r}>{roomConfig[r]?.label || r}</option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="col-span-3">
-                        <input
-                          type="number"
-                          min="1"
-                          value={item.qty}
-                          onChange={e => updateEditRoomSelection(idx, 'qty', e.target.value)}
-                          className="w-full p-1.5 text-xs border border-slate-300 rounded-lg bg-white text-center font-bold"
-                        />
-                      </div>
-                      <div className="col-span-2 flex justify-end">
-                        {(editingBooking.roomSelections || []).length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => removeEditRoomRow(idx)}
-                            className="text-rose-600 p-1.5 text-xs"
-                          >
-                            <i className="fa-solid fa-trash"></i>
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">දිනය (Date)</label>
-                    <input
-                      type="date"
-                      required
-                      value={editingBooking.date}
-                      onChange={e => setEditingBooking({ ...editingBooking, date: e.target.value, customCheckInDate: e.target.value })}
-                      className="w-full p-2 text-sm border border-slate-300 rounded-lg"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">Package</label>
-                    <select
-                      value={editingBooking.type}
-                      onChange={e => setEditingBooking({
-                        ...editingBooking,
-                        type: e.target.value,
-                        customCheckInDate: editingBooking.customCheckInDate || editingBooking.date,
-                        customCheckOutDate: editingBooking.customCheckOutDate || editingBooking.date
-                      })}
-                      className="w-full p-2 text-sm border border-slate-300 rounded-lg bg-white"
-                    >
-                      {PACKAGES.map(p => (
-                        <option key={p.id} value={p.id}>{p.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                {editingBooking.type === 'Custom Time' && (
-                  <div className="space-y-2.5 bg-slate-50 p-2.5 rounded-xl border border-slate-200">
-                    <div>
-                      <p className="text-xs font-bold text-slate-700 mb-1">Check-in දිනය සහ වේලාව</p>
-                      <div className="grid grid-cols-2 gap-2">
-                        <input
-                          type="date"
-                          value={editingBooking.customCheckInDate || editingBooking.date || ''}
-                          onChange={e => setEditingBooking({ ...editingBooking, customCheckInDate: e.target.value, date: e.target.value })}
-                          className="w-full p-2 text-xs border border-slate-300 rounded-lg bg-white"
-                        />
-                        <input
-                          type="time"
-                          value={editingBooking.customCheckInTime || ''}
-                          onChange={e => setEditingBooking({ ...editingBooking, customCheckInTime: e.target.value })}
-                          className="w-full p-2 text-xs border border-slate-300 rounded-lg bg-white"
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <p className="text-xs font-bold text-slate-700 mb-1">Check-out දිනය සහ වේලාව</p>
-                      <div className="grid grid-cols-2 gap-2">
-                        <input
-                          type="date"
-                          value={editingBooking.customCheckOutDate || editingBooking.customCheckInDate || editingBooking.date || ''}
-                          onChange={e => setEditingBooking({ ...editingBooking, customCheckOutDate: e.target.value })}
-                          className="w-full p-2 text-xs border border-slate-300 rounded-lg bg-white"
-                        />
-                        <input
-                          type="time"
-                          value={editingBooking.customCheckOutTime || ''}
-                          onChange={e => setEditingBooking({ ...editingBooking, customCheckOutTime: e.target.value })}
-                          className="w-full p-2 text-xs border border-slate-300 rounded-lg bg-white"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                <div className="flex gap-2 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setEditingBooking(null)}
-                    className="flex-1 py-2 rounded-xl border border-slate-300 text-xs font-semibold text-slate-700"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="flex-1 py-2 rounded-xl bg-emerald-700 text-white text-xs font-bold"
-                  >
-                    Save Changes
-                  </button>
-                </div>
-              </form>
-            </div>
-          )}
-
-          {/* Edit Expense Modal */}
-          {editingExpense && isAdmin && (
-            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-              <form onSubmit={handleSaveExpenseEdit} className="bg-white w-full max-w-md rounded-2xl p-4 space-y-3 shadow-2xl">
-                <div className="flex justify-between items-center border-b pb-2">
-                  <h3 className="text-sm font-bold text-slate-800">වියදම Edit කරන්න</h3>
-                  <button type="button" onClick={() => setEditingExpense(null)} className="text-slate-400 hover:text-slate-700">
-                    <i className="fa-solid fa-xmark text-base"></i>
-                  </button>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">වියදම් විස්තරය</label>
-                  <input
-                    type="text"
-                    required
-                    value={editingExpense.title}
-                    onChange={e => setEditingExpense({ ...editingExpense, title: e.target.value })}
-                    className="w-full p-2 text-sm border border-slate-300 rounded-lg"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">මුදල (Rs.)</label>
-                    <input
-                      type="number"
-                      required
-                      min="0"
-                      value={editingExpense.amount}
-                      onChange={e => setEditingExpense({ ...editingExpense, amount: e.target.value })}
-                      className="w-full p-2 text-sm border border-slate-300 rounded-lg"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">දිනය</label>
-                    <input
-                      type="date"
-                      required
-                      value={editingExpense.date}
-                      onChange={e => setEditingExpense({ ...editingExpense, date: e.target.value })}
-                      className="w-full p-2 text-sm border border-slate-300 rounded-lg"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex gap-2 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setEditingExpense(null)}
-                    className="flex-1 py-2 rounded-xl border border-slate-300 text-xs font-semibold text-slate-700"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="flex-1 py-2 rounded-xl bg-rose-600 text-white text-xs font-bold"
-                  >
-                    Save Changes
-                  </button>
-                </div>
-              </form>
-            </div>
-          )}
-
-          {/* Bottom Navigation Bar */}
-          <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t border-slate-200 flex justify-around py-2 z-20 shadow-lg">
-            <button
-              onClick={() => setTab('dashboard')}
-              className={`flex flex-col items-center text-[11px] px-2 py-1 ${tab === 'dashboard' ? 'text-emerald-700 font-bold' : 'text-slate-500'}`}
-            >
-              <i className="fa-solid fa-house text-base mb-0.5"></i>
-              <span>Home</span>
-            </button>
-            <button
-              onClick={() => setTab('calendar')}
-              className={`flex flex-col items-center text-[11px] px-2 py-1 ${tab === 'calendar' ? 'text-emerald-700 font-bold' : 'text-slate-500'}`}
-            >
-              <i className="fa-solid fa-calendar-days text-base mb-0.5"></i>
-              <span>Calendar</span>
-            </button>
-            {isAdmin && (
-              <>
-                <button
-                  onClick={() => setTab('add')}
-                  className={`flex flex-col items-center text-[11px] px-2 py-1 ${tab === 'add' ? 'text-emerald-700 font-bold' : 'text-slate-500'}`}
-                >
-                  <i className="fa-solid fa-circle-plus text-base mb-0.5"></i>
-                  <span>Add</span>
-                </button>
-                <button
-                  onClick={() => setTab('bookings')}
-                  className={`flex flex-col items-center text-[11px] px-2 py-1 ${tab === 'bookings' ? 'text-emerald-700 font-bold' : 'text-slate-500'}`}
-                >
-                  <i className="fa-solid fa-list-check text-base mb-0.5"></i>
-                  <span>Bookings</span>
-                </button>
-                <button
-                  onClick={() => setTab('expenses')}
-                  className={`flex flex-col items-center text-[11px] px-2 py-1 ${tab === 'expenses' ? 'text-emerald-700 font-bold' : 'text-slate-500'}`}
-                >
-                  <i className="fa-solid fa-receipt text-base mb-0.5"></i>
-                  <span>Expenses</span>
-                </button>
-                <button
-                  onClick={() => setTab('rooms')}
-                  className={`flex flex-col items-center text-[11px] px-2 py-1 ${tab === 'rooms' ? 'text-emerald-700 font-bold' : 'text-slate-500'}`}
-                >
-                  <i className="fa-solid fa-bed text-base mb-0.5"></i>
-                  <span>Rooms</span>
-                </button>
-              </>
-            )}
-          </nav>
+  });
+  return { list, fixes };
+}
+
+const inp = 'w-full p-2 text-sm border border-slate-300 rounded-lg bg-white focus:outline-none focus:border-emerald-600';
+const Lbl = ({ t }) => <label className="block text-xs font-semibold text-slate-600 mb-1">{t}</label>;
+const Modal = ({ children }) => (
+  <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+    <div className="bg-white w-full max-w-md rounded-2xl p-4 shadow-2xl max-h-[90vh] overflow-y-auto">{children}</div>
+  </div>
+);
+
+// Add සහ Edit දෙකටම පාවිච්චි වන එකම form එක
+function BookingForm({ f, set, cfg, onSubmit, onCancel, submitLabel }) {
+  const keys = Object.keys(cfg);
+  const upd = (k, v) => set({ ...f, [k]: v });
+  const rows = f.roomSelections;
+  const setRow = (i, k, v) => set({ ...f, roomSelections: rows.map((r, j) => j === i ? { ...r, [k]: k === 'qty' ? Math.max(1, Number(v) || 1) : v } : r) });
+  return (
+    <form onSubmit={onSubmit} className="space-y-3">
+      <div><Lbl t="Guest Name" /><input type="text" required placeholder="අමුත්තාගේ නම" value={f.guest} onChange={e => upd('guest', e.target.value)} className={inp} /></div>
+      <div className="grid grid-cols-2 gap-3">
+        <div><Lbl t="Price (Rs.)" /><input type="number" required min="0" value={f.price} onChange={e => upd('price', e.target.value)} className={inp} /></div>
+        <div><Lbl t="Advance (Rs.)" /><input type="number" min="0" value={f.advance || ''} onChange={e => upd('advance', e.target.value)} className={inp} /></div>
+      </div>
+      <div><Lbl t="කාණ්ඩය (Source)" />
+        <select value={normalizeSource(f.source)} onChange={e => upd('source', e.target.value)} className={inp}>
+          {SOURCE_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+        </select></div>
+      <div><Lbl t="සටහන් (Notes)" /><textarea rows="2" value={f.notes || ''} onChange={e => upd('notes', e.target.value)} className={inp}></textarea></div>
+      <div className="space-y-2 bg-slate-50 p-3 rounded-xl border border-slate-200">
+        <div className="flex justify-between items-center">
+          <span className="text-xs font-bold text-slate-700">Room Types & Quantity</span>
+          <button type="button" onClick={() => set({ ...f, roomSelections: [...rows, { roomType: keys[0], qty: 1 }] })} className="text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg">+ තව Room එකක්</button>
         </div>
-      );
-    }
+        {rows.map((r, i) => (
+          <div key={i} className="grid grid-cols-12 gap-2 items-center">
+            <div className="col-span-7"><select value={r.roomType} onChange={e => setRow(i, 'roomType', e.target.value)} className={inp}>
+              {keys.map(k => <option key={k} value={k}>{cfg[k]?.label || k}</option>)}</select></div>
+            <div className="col-span-3"><input type="number" min="1" value={r.qty} onChange={e => setRow(i, 'qty', e.target.value)} className={inp + ' text-center font-bold'} /></div>
+            <div className="col-span-2 flex justify-end">{rows.length > 1 && <button type="button" onClick={() => set({ ...f, roomSelections: rows.filter((_, j) => j !== i) })} className="text-rose-600 p-2 text-xs"><i className="fa-solid fa-trash"></i></button>}</div>
+          </div>
+        ))}
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div><Lbl t="දිනය (Date)" /><input type="date" required value={f.date} onChange={e => set({ ...f, date: e.target.value, customCheckInDate: e.target.value })} className={inp} /></div>
+        <div><Lbl t="Package" /><select value={f.type} onChange={e => set({ ...f, type: e.target.value, customCheckInDate: f.customCheckInDate || f.date, customCheckOutDate: f.customCheckOutDate || f.date })} className={inp}>
+          {PACKAGES.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}</select></div>
+      </div>
+      {f.type === 'Custom Time' && (
+        <div className="space-y-3 bg-slate-50 p-3 rounded-xl border border-slate-200">
+          <div><p className="text-xs font-bold text-slate-700 mb-1.5">Check-in දිනය සහ වේලාව</p>
+            <div className="grid grid-cols-2 gap-2">
+              <input type="date" value={f.customCheckInDate || f.date} onChange={e => set({ ...f, customCheckInDate: e.target.value, date: e.target.value })} className={inp} />
+              <input type="time" value={f.customCheckInTime || ''} onChange={e => upd('customCheckInTime', e.target.value)} className={inp} />
+            </div></div>
+          <div><p className="text-xs font-bold text-slate-700 mb-1.5">Check-out දිනය සහ වේලාව</p>
+            <div className="grid grid-cols-2 gap-2">
+              <input type="date" value={f.customCheckOutDate || f.customCheckInDate || f.date} onChange={e => upd('customCheckOutDate', e.target.value)} className={inp} />
+              <input type="time" value={f.customCheckOutTime || ''} onChange={e => upd('customCheckOutTime', e.target.value)} className={inp} />
+            </div></div>
+        </div>
+      )}
+      <div className="flex gap-2 pt-1">
+        {onCancel && <button type="button" onClick={onCancel} className="flex-1 py-2.5 rounded-xl border border-slate-300 text-xs font-semibold text-slate-700">Cancel</button>}
+        <button type="submit" className="flex-1 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-bold">{submitLabel}</button>
+      </div>
+    </form>
+  );
+}
 
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
-  </script>
+function ExpenseForm({ f, set, onSubmit, onCancel, submitLabel }) {
+  return (
+    <form onSubmit={onSubmit} className="space-y-3">
+      <div><Lbl t="වියදම් විස්තරය" /><input type="text" required placeholder="උදා: Lunch / Electricity / Cleaning" value={f.title} onChange={e => set({ ...f, title: e.target.value })} className={inp} /></div>
+      <div className="grid grid-cols-2 gap-3">
+        <div><Lbl t="මුදල (Rs.)" /><input type="number" required min="0" value={f.amount} onChange={e => set({ ...f, amount: e.target.value })} className={inp} /></div>
+        <div><Lbl t="දිනය" /><input type="date" required value={f.date} onChange={e => set({ ...f, date: e.target.value })} className={inp} /></div>
+      </div>
+      <div className="flex gap-2">
+        {onCancel && <button type="button" onClick={onCancel} className="flex-1 py-2.5 rounded-xl border border-slate-300 text-xs font-semibold text-slate-700">Cancel</button>}
+        <button type="submit" className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-sm font-bold">{submitLabel}</button>
+      </div>
+    </form>
+  );
+}
+
+const emptyBooking = (roomKey) => ({
+  guest: '', price: '', advance: '', source: 'Nirmal', notes: '',
+  roomSelections: [{ roomType: roomKey, qty: 1 }], type: 'Day Out',
+  customCheckInDate: todayISO(), customCheckInTime: '', customCheckOutDate: todayISO(), customCheckOutTime: '', date: todayISO()
+});
+
+function App() {
+  // Role එක localStorage එකේ save කරන්නේ නැහැ (පිටුව refresh කළාම නැවත PIN ඕන)
+  const [role, setRole] = useState('view');
+  const isAdmin = role === 'admin' || role === 'owner';
+  const isOwner = role === 'owner';
+  const [showPin, setShowPin] = useState(false);
+  const [pinInput, setPinInput] = useState('');
+  const [pinError, setPinError] = useState('');
+  const failsRef = useRef({ n: 0, until: 0 });
+
+  const [tab, setTab] = useState('dashboard');
+  const [sync, setSync] = useState(BASE ? 'Syncing' : 'Local');
+
+  const load = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } };
+  const [roomConfig, setRoomConfig] = useState(() => load('gs_room_config_v1', DEFAULT_ROOM_CONFIG));
+  const [bookings, setBookings] = useState(() => { const l = load('gs_bookings_v4', []); return Array.isArray(l) ? l.map(b => ({ ...b, source: normalizeSource(b.source) })) : []; });
+  const [deleteRequests, setDeleteRequests] = useState(() => load('gs_delete_requests_v1', []));
+  const [expenses, setExpenses] = useState(() => load('gs_expenses_v1', []));
+
+  const roomKeys = Object.keys(roomConfig);
+  const defaultRoomKey = roomKeys[0] || 'Double';
+  const [newRoomName, setNewRoomName] = useState('');
+  const [newRoomTotal, setNewRoomTotal] = useState('1');
+  const [formData, setFormData] = useState(() => emptyBooking('Double'));
+  const [editingBooking, setEditingBooking] = useState(null);
+  const [editingExpense, setEditingExpense] = useState(null);
+  const [delBooking, setDelBooking] = useState(null);
+  const [delReason, setDelReason] = useState('');
+  const [calYear, setCalYear] = useState(() => new Date().getFullYear());
+  const [calMonth, setCalMonth] = useState(() => new Date().getMonth());
+  const [selDate, setSelDate] = useState(todayISO());
+  const [bookingMonth, setBookingMonth] = useState(currentMonthISO());
+  const [expenseMonth, setExpenseMonth] = useState(currentMonthISO());
+  const [expForm, setExpForm] = useState({ title: '', amount: '', date: todayISO() });
+  const verRef = useRef(0);
+
+  useEffect(() => { localStorage.removeItem('gs_user_role_v1'); }, []);
+  useEffect(() => { localStorage.setItem('gs_room_config_v1', JSON.stringify(roomConfig)); }, [roomConfig]);
+  useEffect(() => { localStorage.setItem('gs_bookings_v4', JSON.stringify(bookings)); }, [bookings]);
+  useEffect(() => { localStorage.setItem('gs_delete_requests_v1', JSON.stringify(deleteRequests)); }, [deleteRequests]);
+  useEffect(() => { localStorage.setItem('gs_expenses_v1', JSON.stringify(expenses)); }, [expenses]);
+
+  // සියලු Firebase writes/deletes මෙතනින්. ඇත්තටම යැව්වාද (true) නැත්නම් queue එකේ තියෙනවාද (false) කියලා දෙනවා.
+  const write = useCallback(async (path, data) => {
+    if (!BASE) return true;
+    verRef.current++;
+    const ok = await sendOp(data === null ? { path, del: true } : { path, data });
+    setSync(ok ? 'Live' : `Offline (${queue.length} pending)`);
+    return ok;
+  }, []);
+
+  const pull = useCallback(async () => {
+    if (!BASE) { setSync('Local'); return null; }
+    const v = verRef.current;
+    try {
+      if (!(await flush())) { setSync(`Offline (${queue.length} pending)`); return null; }
+      const res = await fetch(fbUrl('') + `?t=${Date.now()}`, { cache: 'no-store' });
+      if (!res.ok) throw new Error('net');
+      const data = await res.json();
+      if (verRef.current !== v || queue.length) return null; // අතරතුර වෙනස්කමක් වුණා නම් පරණ data දාන්නේ නැහැ
+
+      const b = toArray(data?.bookings, 'bookings');
+      const e = toArray(data?.expenses, 'expenses');
+      const r = toArray(data?.deleteRequests, 'deleteRequests');
+      const remoteBookings = b.list.map(x => ({ ...x, source: normalizeSource(x.source) }));
+      const remoteRooms = data?.roomConfig && typeof data.roomConfig === 'object' ? data.roomConfig : DEFAULT_ROOM_CONFIG;
+
+      // වැරදි key යටතේ තිබූ records (මකද්දී ආපහු එන ඒවා) ස්වයංක්‍රීයව නිවැරදි key එකට මාරු කරනවා
+      const fixes = [...b.fixes, ...e.fixes, ...r.fixes];
+      if (fixes.length) { verRef.current++; fixes.forEach(op => queue.push(op)); saveQ(); flush(); }
+
+      const same = (a, c) => JSON.stringify(a) === JSON.stringify(c);
+      setBookings(p => same(p, remoteBookings) ? p : remoteBookings);
+      setExpenses(p => same(p, e.list) ? p : e.list);
+      setDeleteRequests(p => same(p, r.list) ? p : r.list);
+      setRoomConfig(p => same(p, remoteRooms) ? p : remoteRooms);
+      setSync('Live');
+      return { remoteBookings, remoteExpenses: e.list, remoteRequests: r.list };
+    } catch (err) { setSync('Offline'); return null; }
+  }, []);
+
+  // තත්පර 10කට වරක් (පිටුව පෙනෙන විට පමණක්) + app එකට ආපසු ආ විට
+  useEffect(() => {
+    if (!BASE) return;
+    const tick = () => { if (!document.hidden) pull(); };
+    tick();
+    const id = setInterval(tick, 10000);
+    document.addEventListener('visibilitychange', tick);
+    return () => { clearInterval(id); document.removeEventListener('visibilitychange', tick); };
+  }, [pull]);
+
+  useEffect(() => {
+    if (!isAdmin && ['add', 'bookings', 'expenses', 'rooms'].includes(tab)) setTab('dashboard');
+  }, [isAdmin, tab]);
+
+  const roleClick = () => {
+    if (role !== 'view') setRole('view');
+    else { setPinInput(''); setPinError(''); setShowPin(true); }
+  };
+  const verifyPin = async (e) => {
+    e.preventDefault();
+    const f = failsRef.current;
+    if (Date.now() < f.until) return setPinError('වැරදි උත්සාහ වැඩියි. තත්පර 30කින් නැවත උත්සාහ කරන්න.');
+    if (!window.crypto?.subtle) return setPinError('මෙම browser එකේ PIN පරීක්ෂාව වැඩ කරන්නේ නැහැ (https ඕන).');
+    const h = await sha256(pinInput.trim());
+    if (h === OWNER_HASH) setRole('owner');
+    else if (h === ADMIN_HASH) setRole('admin');
+    else {
+      f.n++; if (f.n >= 5) { f.until = Date.now() + 30000; f.n = 0; }
+      return setPinError('PIN අංකය වැරදියි. නැවත උත්සාහ කරන්න.');
+    }
+    f.n = 0; setShowPin(false); setPinInput(''); setPinError('');
+  };
+
+  const pushRoomConfig = async (cfg) => { setRoomConfig(cfg); await write('roomConfig', cfg); };
+  const adjustRoom = (key, delta) => {
+    if (!isAdmin || !roomConfig[key]) return;
+    pushRoomConfig({ ...roomConfig, [key]: { ...roomConfig[key], total: Math.max(0, Number(roomConfig[key].total || 0) + delta) } });
+  };
+  const addRoomType = async (e) => {
+    e.preventDefault();
+    if (!isAdmin) return;
+    const name = newRoomName.trim();
+    if (!name) return alert('කරුණාකර Room වර්ගයේ නම ඇතුළත් කරන්න.');
+    if (roomConfig[name]) return alert('මෙම Room වර්ගය දැනටමත් පවතී.');
+    const st = EXTRA_STYLES[roomKeys.length % EXTRA_STYLES.length];
+    await pushRoomConfig({ ...roomConfig, [name]: { label: name, total: Math.max(0, Number(newRoomTotal) || 0), ...st } });
+    setNewRoomName(''); setNewRoomTotal('1');
+  };
+
+  const buildBooking = (f, id, status) => {
+    const custom = f.type === 'Custom Time';
+    const sel = f.roomSelections.map(i => ({ roomType: i.roomType || defaultRoomKey, qty: Math.max(1, Number(i.qty) || 1) }));
+    const date = custom && f.customCheckInDate ? f.customCheckInDate : f.date;
+    return {
+      ...f, id, status,
+      guest: f.guest.trim(), price: Number(f.price), advance: Number(f.advance) || 0,
+      source: normalizeSource(f.source), notes: (f.notes || '').trim(),
+      roomType: sel[0].roomType, roomQty: sel.reduce((s, i) => s + i.qty, 0), roomSelections: sel, date,
+      customCheckInDate: custom ? date : '', customCheckInTime: custom ? (f.customCheckInTime || '') : '',
+      customCheckOutDate: custom ? (f.customCheckOutDate || date) : '', customCheckOutTime: custom ? (f.customCheckOutTime || '') : ''
+    };
+  };
+
+  const saveBooking = async (f, isNew) => {
+    if (!isAdmin) return;
+    if (!f.guest.trim() || f.price === '') return alert('කරුණාකර Guest Name සහ Price ඇතුළත් කරන්න.');
+    const latest = await pull();
+    const base = latest ? latest.remoteBookings : bookings;
+    const nb = buildBooking(f, isNew ? Date.now() : f.id, isNew ? 'pending' : (f.status || 'pending'));
+    const c = findConflict(nb, nb.id, base, roomConfig);
+    if (c) return alert(c);
+
+    setBookings([nb, ...base.filter(b => String(b.id) !== String(nb.id))]);
+    const ok = await write(`bookings/${nb.id}`, nb);
+    if (!ok) alert('Internet නැති නිසා Booking එක phone එකේ save වුණා. Internet ආපු විට ස්වයංක්‍රීයව server එකට යනවා.');
+    else if (isNew) {
+      // තවත් Admin කෙනෙක් එකම වෙලාවේ book කළාද කියා නැවත පරීක්ෂා කිරීම (කලින් id එක තියෙන Booking එක රැඳෙනවා)
+      const l2 = await pull();
+      if (l2) {
+        const earlier = l2.remoteBookings.filter(b => Number(b.id) < nb.id);
+        const c2 = findConflict(nb, nb.id, earlier, roomConfig);
+        if (c2) {
+          setBookings(p => p.filter(b => b.id !== nb.id));
+          await write(`bookings/${nb.id}`, null);
+          return alert('මේ අතරතුර වෙනත් කෙනෙක් එම කාමරයම Book කළා. ඔබේ Booking එක ඉවත් කළා.\n' + c2);
+        }
+      }
+    }
+    if (isNew) { setFormData(emptyBooking(defaultRoomKey)); setBookingMonth(nb.date.slice(0, 7)); setTab('bookings'); }
+    else setEditingBooking(null);
+  };
+
+  const setStatus = async (id, status) => {
+    if (!isAdmin) return;
+    const t = bookings.find(b => String(b.id) === String(id));
+    if (!t) return;
+    const u = { ...t, status };
+    setBookings(bookings.map(b => String(b.id) === String(id) ? u : b));
+    await write(`bookings/${id}`, u);
+  };
+
+  const submitDeleteRequest = async (e) => {
+    e.preventDefault();
+    if (!isAdmin || !delBooking) return;
+    const latest = await pull();
+    const base = latest ? latest.remoteRequests : deleteRequests;
+    if (base.some(r => String(r.bookingId) === String(delBooking.id))) { alert('මෙම Booking එක සඳහා Delete Request එකක් දැනටමත් යවා ඇත.'); return setDelBooking(null); }
+    const req = {
+      id: Date.now(), bookingId: delBooking.id, requestedBy: 'Admin', requestedAt: new Date().toLocaleString('si-LK'),
+      reason: delReason.trim() || 'හේතුවක් සඳහන් කර නැත',
+      snapshot: { guest: delBooking.guest, date: delBooking.date, rooms: formatBookingRoomsText(delBooking), price: Number(delBooking.price) || 0, source: normalizeSource(delBooking.source) }
+    };
+    setDeleteRequests([req, ...base]);
+    await write(`deleteRequests/${req.id}`, req);
+    setDelBooking(null); setDelReason('');
+    alert('Delete Request එක Owner වෙත යවන ලදී.');
+  };
+  const removeBooking = async (id, reqIds = []) => {
+    setBookings(p => p.filter(b => String(b.id) !== String(id)));
+    setDeleteRequests(p => p.filter(r => String(r.bookingId) !== String(id)));
+    await write(`bookings/${id}`, null);
+    for (const rid of reqIds) await write(`deleteRequests/${rid}`, null);
+  };
+  const ownerDelete = (id) => {
+    if (!isOwner || !confirm('Owner ලෙස මෙම Booking එක සම්පූර්ණයෙන්ම ඉවත් කිරීමට අවශ්‍යද?')) return;
+    removeBooking(id, deleteRequests.filter(r => String(r.bookingId) === String(id)).map(r => r.id));
+  };
+  const rejectRequest = async (rid) => {
+    if (!isOwner) return;
+    setDeleteRequests(p => p.filter(r => String(r.id) !== String(rid)));
+    await write(`deleteRequests/${rid}`, null);
+  };
+
+  const saveExpense = async (f, isNew) => {
+    if (!isAdmin) return;
+    if (!f.title.trim() || f.amount === '') return alert('කරුණාකර වියදම් විස්තරය සහ මුදල ඇතුළත් කරන්න.');
+    const latest = await pull();
+    const base = latest ? latest.remoteExpenses : expenses;
+    const ex = { id: isNew ? Date.now() : f.id, title: f.title.trim(), amount: Number(f.amount), date: f.date };
+    setExpenses([ex, ...base.filter(x => String(x.id) !== String(ex.id))]);
+    await write(`expenses/${ex.id}`, ex);
+    if (isNew) { setExpenseMonth(ex.date.slice(0, 7)); setExpForm({ title: '', amount: '', date: todayISO() }); }
+    else setEditingExpense(null);
+  };
+  const deleteExpense = async (id) => {
+    if (!isAdmin || !confirm('මෙම වියදම ඉවත් කිරීමට අවශ්‍යද?')) return;
+    setExpenses(p => p.filter(x => String(x.id) !== String(id)));
+    await write(`expenses/${id}`, null);
+  };
+
+  // ---------- derived ----------
+  const today = todayISO();
+  const totalRooms = useMemo(() => Object.values(roomConfig).reduce((s, r) => s + (Number(r.total) || 0), 0), [roomConfig]);
+  const todayBookings = bookings.filter(b => bookingCoversDate(b, today));
+  const todayDayOut = todayBookings.filter(b => b.type === 'Day Out').reduce((s, b) => s + getBookingRoomCount(b), 0);
+  const todayNight = todayBookings.filter(b => b.type === 'Night Out' || b.type === '1 Night Standard').reduce((s, b) => s + getBookingRoomCount(b), 0);
+
+  const calendarDays = useMemo(() => {
+    const first = new Date(calYear, calMonth, 1).getDay();
+    const n = new Date(calYear, calMonth + 1, 0).getDate();
+    const cells = Array(first).fill(null);
+    for (let d = 1; d <= n; d++) cells.push({ day: d, iso: `${calYear}-${pad(calMonth + 1)}-${pad(d)}` });
+    return cells;
+  }, [calYear, calMonth]);
+  const selBookings = bookings.filter(b => bookingCoversDate(b, selDate));
+  const availability = Object.entries(roomConfig).map(([key, info]) => ({
+    key, label: info.label, soft: info.soft,
+    available: Math.max(0, (Number(info.total) || 0) - peak(selBookings, key, dayRange(selDate)))
+  }));
+  const monthlyBookings = useMemo(() => bookings.filter(b => b.date && b.date.startsWith(bookingMonth)).sort((a, b) => a.date.localeCompare(b.date)), [bookings, bookingMonth]);
+  const sum = (l, f) => l.reduce((s, b) => s + (Number(f(b)) || 0), 0);
+  const stats = useMemo(() => {
+    const arr = monthlyBookings.filter(b => b.status === 'arrived'), not = monthlyBookings.filter(b => b.status === 'not_arrived');
+    const bySource = {};
+    SOURCE_OPTIONS.forEach(src => {
+      const l = monthlyBookings.filter(b => normalizeSource(b.source) === src);
+      bySource[src] = {
+        total: sum(l, b => b.price), adv: sum(l, b => b.advance),
+        arr: sum(l.filter(b => b.status === 'arrived'), b => b.price), not: sum(l.filter(b => b.status === 'not_arrived'), b => b.price)
+      };
+    });
+    return { ac: arr.length, at: sum(arr, b => b.price), nc: not.length, nt: sum(not, b => b.price), all: sum(monthlyBookings, b => b.price), adv: sum(monthlyBookings, b => b.advance), bySource };
+  }, [monthlyBookings]);
+  const monthlyExpenses = useMemo(() => expenses.filter(x => x.date && x.date.startsWith(expenseMonth)).sort((a, b) => b.date.localeCompare(a.date)), [expenses, expenseMonth]);
+  const expenseTotal = sum(monthlyExpenses, x => x.amount);
+
+  const changeMonth = (d) => {
+    let m = calMonth + d, y = calYear;
+    if (m < 0) { m = 11; y--; } if (m > 11) { m = 0; y++; }
+    setCalMonth(m); setCalYear(y);
+  };
+
+  const exportBookings = () => downloadCSV(`bookings-${bookingMonth}.csv`, [
+    ['Date', 'Guest', 'Rooms', 'Package', 'Source', 'Price', 'Advance', 'Balance', 'Status', 'Notes'],
+    ...monthlyBookings.map(b => [b.date, b.guest, formatBookingRoomsText(b), renderPackageText(b), normalizeSource(b.source), b.price, b.advance || 0, Math.max(0, (b.price || 0) - (b.advance || 0)), b.status, b.notes])
+  ]);
+  const exportExpenses = () => downloadCSV(`expenses-${expenseMonth}.csv`, [['Date', 'Title', 'Amount'], ...monthlyExpenses.map(x => [x.date, x.title, x.amount])]);
+  const fullBackup = () => downloadJSON(`green-stay-backup-${today}.json`, { bookings, expenses, deleteRequests, roomConfig });
+
+  const renderBookingCard = (b) => {
+    const decided = b.status === 'arrived' || b.status === 'not_arrived';
+    const adv = Number(b.advance) || 0, price = Number(b.price) || 0;
+    const hasReq = deleteRequests.some(r => String(r.bookingId) === String(b.id));
+    const badge = (st, txt, cls, hov) => b.status === st && (
+      <button type="button" disabled={!isAdmin} onClick={() => setStatus(b.id, st === 'arrived' ? 'not_arrived' : 'arrived')}
+        className={`inline-block mt-1 text-[11px] px-2 py-0.5 rounded-full font-semibold ${cls} ${isAdmin ? 'cursor-pointer ' + hov : ''}`}>{txt}</button>
+    );
+    return (
+      <div key={b.id} className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm space-y-2">
+        <div className="flex justify-between items-start">
+          <div>
+            <p className="text-sm font-bold text-slate-800">{b.guest}</p>
+            <p className="text-xs text-slate-500">{b.date} • {formatBookingRoomsText(b)} • {renderPackageText(b)}</p>
+            <p className="text-xs text-slate-600 mt-0.5">කාණ්ඩය: <span className="font-semibold">{normalizeSource(b.source)}</span></p>
+            {adv > 0 && <p className="text-xs text-sky-700 mt-0.5">Advance: <span className="font-bold">Rs. {adv.toLocaleString()}</span> • ඉතිරි: <span className="font-semibold">Rs. {Math.max(0, price - adv).toLocaleString()}</span></p>}
+            {b.notes && <p className="text-xs text-slate-600 mt-1 bg-slate-50 px-2 py-1 rounded">සටහන: {b.notes}</p>}
+            {hasReq && <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded mt-1 inline-block font-semibold">Delete Request Pending</p>}
+          </div>
+          <div className="text-right">
+            <p className="text-sm font-bold text-emerald-700">Rs. {price.toLocaleString()}</p>
+            {badge('arrived', 'පැමිණියා', 'bg-emerald-100 text-emerald-800', 'hover:bg-emerald-200')}
+            {badge('not_arrived', 'නොපැමිණි', 'bg-rose-100 text-rose-800', 'hover:bg-rose-200')}
+          </div>
+        </div>
+        {isAdmin && !decided && (
+          <div className="flex gap-2 pt-2 border-t border-slate-100">
+            <button type="button" onClick={() => setStatus(b.id, 'arrived')} className="flex-1 py-1.5 rounded-lg text-xs font-semibold border bg-emerald-50 text-emerald-700 border-emerald-200"><i className="fa-solid fa-check"></i> පැමිණියා</button>
+            <button type="button" onClick={() => setStatus(b.id, 'not_arrived')} className="flex-1 py-1.5 rounded-lg text-xs font-semibold border bg-rose-50 text-rose-700 border-rose-200"><i className="fa-solid fa-xmark"></i> නොපැමිණි</button>
+          </div>
+        )}
+        {isAdmin && (
+          <div className="flex items-center justify-end gap-2 pt-1.5 border-t border-slate-100">
+            <button type="button" onClick={() => setEditingBooking({ ...b, source: normalizeSource(b.source), roomSelections: getRooms(b).map(i => ({ ...i })) })} className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700"><i className="fa-solid fa-pen"></i> Edit</button>
+            {isOwner && <button type="button" onClick={() => ownerDelete(b.id)} className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200"><i className="fa-solid fa-trash"></i> Delete</button>}
+            {role === 'admin' && <button type="button" disabled={hasReq} onClick={() => { setDelBooking(b); setDelReason(''); }}
+              className={`px-2.5 py-1 rounded-lg text-xs font-semibold border bg-amber-50 text-amber-800 border-amber-300 ${hasReq ? 'opacity-60' : ''}`}><i className="fa-solid fa-paper-plane"></i> {hasReq ? 'Requested' : 'Request Delete'}</button>}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const roleStyle = role === 'owner' ? 'bg-amber-400 text-slate-900 border-amber-300' : role === 'admin' ? 'bg-sky-300 text-slate-900 border-sky-200' : 'bg-emerald-800 text-emerald-200 border-emerald-600';
+  const navItems = [['dashboard', 'fa-house', 'Home'], ['calendar', 'fa-calendar-days', 'Calendar'],
+    ...(isAdmin ? [['add', 'fa-circle-plus', 'Add'], ['bookings', 'fa-list-check', 'Bookings'], ['expenses', 'fa-receipt', 'Expenses'], ['rooms', 'fa-bed', 'Rooms']] : [])];
+  const card = 'bg-white p-4 rounded-xl border border-slate-200 shadow-sm';
+
+  return (
+    <div className="max-w-md mx-auto bg-white min-h-screen shadow-xl relative pb-20">
+      <header className="bg-emerald-700 text-white p-4 sticky top-0 z-10 flex justify-between items-center shadow-md">
+        <div>
+          <h1 className="text-lg font-bold">Green Stay Negombo</h1>
+          <p className="text-xs text-emerald-100">කාමර වෙන්කිරීම් කළමනාකරු • {sync}{isOwner && deleteRequests.length > 0 ? ` • Requests (${deleteRequests.length})` : ''}</p>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <button type="button" onClick={() => pull()} className="text-xs px-2.5 py-1.5 rounded-full bg-emerald-800 text-emerald-100 border border-emerald-600"><i className="fa-solid fa-rotate"></i></button>
+          <button type="button" onClick={roleClick} className={`text-xs px-3 py-1.5 rounded-full border flex items-center gap-1.5 font-semibold ${roleStyle}`}>
+            <i className={`fa-solid ${isAdmin ? 'fa-lock-open' : 'fa-lock'}`}></i><span>{role === 'owner' ? 'Owner' : role === 'admin' ? 'Admin' : 'View'}</span>
+          </button>
+        </div>
+      </header>
+
+      <main className="p-4">
+        {tab === 'dashboard' && (
+          <div className="space-y-4">
+            {isOwner && deleteRequests.length > 0 && (
+              <div className="bg-amber-50 border border-amber-300 rounded-xl p-3.5 space-y-2.5">
+                <h2 className="text-xs font-bold text-amber-900 uppercase">Delete Requests ({deleteRequests.length})</h2>
+                {deleteRequests.map(req => (
+                  <div key={req.id} className="bg-white p-3 rounded-lg border border-amber-200 space-y-1.5">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <p className="text-sm font-bold">{req.snapshot?.guest}</p>
+                        <p className="text-xs text-slate-500">{req.snapshot?.date} • {req.snapshot?.rooms} • {req.snapshot?.source}</p>
+                        <p className="text-xs text-slate-600 mt-1">හේතුව: <span className="font-semibold">{req.reason}</span></p>
+                        <p className="text-[11px] text-slate-400">{req.requestedAt}</p>
+                      </div>
+                      <span className="text-xs font-bold text-emerald-700">Rs. {Number(req.snapshot?.price || 0).toLocaleString()}</span>
+                    </div>
+                    <div className="flex gap-2 pt-1.5 border-t border-slate-100">
+                      <button type="button" onClick={() => removeBooking(req.bookingId, [req.id])} className="flex-1 py-1.5 rounded-lg text-xs font-bold bg-rose-600 text-white">Approve Delete</button>
+                      <button type="button" onClick={() => rejectRequest(req.id)} className="flex-1 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700">Reject</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-xl text-center"><i className="fa-solid fa-sun text-emerald-600 text-xl mb-1"></i><p className="text-xs text-slate-600">අද Day Out</p><p className="text-2xl font-bold mt-1">{todayDayOut} / {totalRooms}</p></div>
+              <div className="bg-indigo-50 border border-indigo-200 p-4 rounded-xl text-center"><i className="fa-solid fa-moon text-indigo-600 text-xl mb-1"></i><p className="text-xs text-slate-600">අද Night / Stay</p><p className="text-2xl font-bold mt-1">{todayNight} / {totalRooms}</p></div>
+            </div>
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+              <h2 className="text-xs font-bold text-slate-500 uppercase mb-2">කාමර ධාරිතාව (අද උපරිම)</h2>
+              <div className="grid grid-cols-2 gap-2">
+                {Object.entries(roomConfig).map(([key, info]) => (
+                  <div key={key} className={`p-2.5 rounded-lg border text-xs flex justify-between items-center ${info.soft}`}>
+                    <span className="font-semibold">{info.label}</span><span className="font-bold">{peak(todayBookings, key, dayRange(today))}/{info.total}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="bg-emerald-50/60 border border-emerald-100 rounded-xl p-3.5">
+              <h2 className="text-sm font-bold text-emerald-900 mb-2.5"><i className="fa-solid fa-bell text-emerald-700"></i> ඊළඟ Booking සටහන්</h2>
+              {bookings.filter(b => b.date >= today).length === 0 ? <p className="text-xs text-slate-500 text-center py-4">ඉදිරි Bookings කිසිවක් නොමැත.</p> : (
+                <div className="space-y-2">
+                  {bookings.filter(b => b.date >= today).sort((a, b) => a.date.localeCompare(b.date)).slice(0, 5).map(b => (
+                    <div key={b.id} className="bg-white p-3 rounded-lg border border-slate-100 shadow-sm flex justify-between items-center">
+                      <div>
+                        <p className="text-sm font-bold">{b.guest} <span className="text-xs font-normal text-slate-500">({formatBookingRoomsText(b)})</span></p>
+                        <p className="text-xs text-slate-500">{b.date} • {renderPackageText(b)}</p>
+                      </div>
+                      <span className="text-xs font-bold text-emerald-700">Rs. {Number(b.price).toLocaleString()}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {tab === 'calendar' && (
+          <div className="space-y-4">
+            <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm">
+              <div className="flex justify-between items-center mb-3">
+                <button onClick={() => changeMonth(-1)} className="w-8 h-8 rounded-lg bg-slate-100"><i className="fa-solid fa-chevron-left text-xs"></i></button>
+                <h2 className="text-sm font-bold">{calYear} {SI_MONTHS[calMonth]}</h2>
+                <button onClick={() => changeMonth(1)} className="w-8 h-8 rounded-lg bg-slate-100"><i className="fa-solid fa-chevron-right text-xs"></i></button>
+              </div>
+              <div className="grid grid-cols-7 gap-1 text-center mb-1">{SI_DAYS.map(d => <div key={d} className="text-[11px] font-semibold text-slate-400 py-1">{d}</div>)}</div>
+              <div className="grid grid-cols-7 gap-1">
+                {calendarDays.map((cell, i) => {
+                  if (!cell) return <div key={i} className="h-10"></div>;
+                  const has = bookings.some(b => bookingCoversDate(b, cell.iso));
+                  const sel = selDate === cell.iso;
+                  return (
+                    <button key={cell.iso} onClick={() => setSelDate(cell.iso)} className={`h-10 rounded-lg flex flex-col items-center justify-center text-xs ${sel ? 'bg-emerald-700 text-white font-bold shadow' : today === cell.iso ? 'bg-emerald-50 text-emerald-800 font-bold border border-emerald-300' : 'hover:bg-slate-100 text-slate-700'}`}>
+                      <span>{cell.day}</span>{has && <span className={`w-1.5 h-1.5 rounded-full mt-0.5 ${sel ? 'bg-amber-300' : 'bg-emerald-600'}`}></span>}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className={card}>
+              <h3 className="text-xs font-bold text-slate-600 uppercase mb-2">{selDate} ඉතිරි Rooms (එදින වඩාත්ම පිරෙන වෙලාව අනුව)</h3>
+              <div className="grid grid-cols-2 gap-2">
+                {availability.map(it => (
+                  <div key={it.key} className={`p-2.5 rounded-lg border text-xs flex justify-between items-center ${it.available > 0 ? it.soft : 'bg-rose-50 text-rose-700 border-rose-200'}`}>
+                    <span className="font-semibold">{it.label}</span><span className="font-bold">{it.available > 0 ? `${it.available} ඉතිරි` : 'නැත'}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5">
+              <h3 className="text-sm font-bold mb-3">{selDate} Bookings ({selBookings.length})</h3>
+              {selBookings.length === 0 ? <p className="text-xs text-slate-500 text-center py-6">මෙම දිනයට Bookings කිසිවක් නොමැත.</p> : <div className="space-y-2.5">{selBookings.map(renderBookingCard)}</div>}
+            </div>
+          </div>
+        )}
+
+        {tab === 'add' && isAdmin && (
+          <div className={card}>
+            <h2 className="text-base font-bold border-b pb-2 mb-3">අලුත් Booking එකක්</h2>
+            <BookingForm f={formData} set={setFormData} cfg={roomConfig} onSubmit={(e) => { e.preventDefault(); saveBooking(formData, true); }} submitLabel="Booking එක Save කරන්න" />
+          </div>
+        )}
+
+        {tab === 'bookings' && isAdmin && (
+          <div className="space-y-3.5">
+            <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between gap-2">
+              <span className="text-xs font-bold text-slate-600">මාසය:</span>
+              <input type="month" value={bookingMonth} onChange={e => setBookingMonth(e.target.value)} className="text-xs font-bold border border-slate-300 rounded-lg px-2.5 py-1.5" />
+              <button type="button" onClick={exportBookings} className="text-xs font-bold bg-emerald-700 text-white px-3 py-1.5 rounded-lg"><i className="fa-solid fa-file-csv"></i> Excel</button>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <div className="bg-emerald-50 border border-emerald-200 p-2.5 rounded-xl text-center"><p className="text-[11px] font-semibold text-emerald-800">පැමිණි ({stats.ac})</p><p className="text-xs font-bold text-emerald-900 mt-1">Rs. {stats.at.toLocaleString()}</p></div>
+              <div className="bg-rose-50 border border-rose-200 p-2.5 rounded-xl text-center"><p className="text-[11px] font-semibold text-rose-800">නොපැමිණි ({stats.nc})</p><p className="text-xs font-bold text-rose-900 mt-1">Rs. {stats.nt.toLocaleString()}</p></div>
+              <div className="bg-slate-800 text-white p-2.5 rounded-xl text-center"><p className="text-[11px] text-slate-300">මුළු ({monthlyBookings.length})</p><p className="text-xs font-bold text-amber-300 mt-1">Rs. {stats.all.toLocaleString()}</p></div>
+            </div>
+            <div className="bg-sky-50 border border-sky-200 p-3 rounded-xl flex justify-between items-center"><span className="text-xs font-bold text-sky-900">මුළු Advance එකතුව</span><span className="text-sm font-bold text-sky-900">Rs. {stats.adv.toLocaleString()}</span></div>
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
+              <h3 className="text-xs font-bold text-slate-600">කාණ්ඩ අනුව Total & Advance</h3>
+              {SOURCE_OPTIONS.map(src => { const s = stats.bySource[src]; return (
+                <div key={src} className="bg-white p-2.5 rounded-lg border border-slate-200 text-xs space-y-1">
+                  <div className="flex justify-between"><span className="font-bold">{src}</span><span><b>Rs. {s.total.toLocaleString()}</b> • <b className="text-sky-700">Adv: {s.adv.toLocaleString()}</b></span></div>
+                  <div className="flex gap-3 text-[11px]"><span className="font-semibold text-emerald-700">පැමිණි: Rs. {s.arr.toLocaleString()}</span><span className="font-semibold text-rose-700">නොපැමිණි: Rs. {s.not.toLocaleString()}</span></div>
+                </div>); })}
+            </div>
+            <h3 className="text-xs font-bold text-slate-500 uppercase">{formatMonthLabel(bookingMonth)} Bookings</h3>
+            {monthlyBookings.length === 0 ? <div className="bg-white p-6 rounded-xl border text-center text-xs text-slate-500">මෙම මාසය සඳහා Bookings නොමැත.</div> : <div className="space-y-2.5">{monthlyBookings.map(renderBookingCard)}</div>}
+          </div>
+        )}
+
+        {tab === 'expenses' && isAdmin && (
+          <div className="space-y-4">
+            <div className={card}>
+              <h2 className="text-sm font-bold border-b pb-2 mb-3">වියදමක් එකතු කරන්න</h2>
+              <ExpenseForm f={expForm} set={setExpForm} onSubmit={(e) => { e.preventDefault(); saveExpense(expForm, true); }} submitLabel="වියදම එකතු කරන්න" />
+            </div>
+            <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between gap-2">
+              <span className="text-xs font-bold text-slate-600">මාසය:</span>
+              <input type="month" value={expenseMonth} onChange={e => setExpenseMonth(e.target.value)} className="text-xs font-bold border border-slate-300 rounded-lg px-2.5 py-1.5" />
+              <button type="button" onClick={exportExpenses} className="text-xs font-bold bg-rose-600 text-white px-3 py-1.5 rounded-lg"><i className="fa-solid fa-file-csv"></i> Excel</button>
+            </div>
+            <div className="bg-rose-50 border border-rose-200 p-4 rounded-xl flex justify-between items-center">
+              <div><p className="text-xs font-semibold text-rose-800">{formatMonthLabel(expenseMonth)} මුළු වියදම්</p><p className="text-[11px] text-rose-600">{monthlyExpenses.length} items</p></div>
+              <p className="text-lg font-bold text-rose-900">Rs. {expenseTotal.toLocaleString()}</p>
+            </div>
+            <div className="space-y-2">
+              {monthlyExpenses.length === 0 ? <div className="bg-white p-6 rounded-xl border text-center text-xs text-slate-500">මෙම මාසය සඳහා වියදම් නොමැත.</div> : monthlyExpenses.map(ex => (
+                <div key={ex.id} className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex justify-between items-center">
+                  <div><p className="text-sm font-bold">{ex.title}</p><p className="text-xs text-slate-500">{ex.date}</p></div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-bold text-rose-700">Rs. {Number(ex.amount).toLocaleString()}</span>
+                    <button type="button" onClick={() => setEditingExpense({ ...ex })} className="px-2 py-1 rounded-lg text-xs font-semibold bg-slate-100"><i className="fa-solid fa-pen"></i></button>
+                    <button type="button" onClick={() => deleteExpense(ex.id)} className="text-slate-400 hover:text-rose-600 px-1.5 text-xs"><i className="fa-solid fa-trash"></i></button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {tab === 'rooms' && isAdmin && (
+          <div className="space-y-4">
+            <div className={card + ' space-y-2'}>
+              <h2 className="text-sm font-bold border-b pb-2">කාමර ප්‍රමාණයන් වෙනස් කරන්න</h2>
+              {Object.entries(roomConfig).map(([key, info]) => (
+                <div key={key} className="flex items-center justify-between bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+                  <p className="text-sm font-bold">{info.label}</p>
+                  <div className="flex items-center gap-2">
+                    <button type="button" onClick={() => adjustRoom(key, -1)} className="w-8 h-8 rounded-lg bg-white border border-slate-300 font-bold">-</button>
+                    <span className="w-6 text-center text-sm font-bold">{info.total}</span>
+                    <button type="button" onClick={() => adjustRoom(key, 1)} className="w-8 h-8 rounded-lg bg-emerald-700 text-white font-bold">+</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <form onSubmit={addRoomType} className={card + ' space-y-3'}>
+              <h2 className="text-sm font-bold border-b pb-2">අලුත් Room වර්ගයක්</h2>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="col-span-2"><Lbl t="නම" /><input type="text" required placeholder="උදා: Deluxe Room" value={newRoomName} onChange={e => setNewRoomName(e.target.value)} className={inp} /></div>
+                <div><Lbl t="ගණන" /><input type="number" required min="0" value={newRoomTotal} onChange={e => setNewRoomTotal(e.target.value)} className={inp} /></div>
+              </div>
+              <button type="submit" className="w-full bg-emerald-700 text-white font-bold py-2.5 rounded-xl text-sm">Room වර්ගය Add කරන්න</button>
+            </form>
+            <div className={card}>
+              <h2 className="text-sm font-bold mb-2">Backup</h2>
+              <p className="text-xs text-slate-500 mb-3">සියලු Bookings, වියදම්, කාමර දත්ත file එකක් විදියට phone එකට බාගන්න.</p>
+              <button type="button" onClick={fullBackup} className="w-full bg-slate-800 text-white font-bold py-2.5 rounded-xl text-sm"><i className="fa-solid fa-download"></i> සම්පූර්ණ Backup බාගන්න</button>
+            </div>
+          </div>
+        )}
+      </main>
+
+      {showPin && (
+        <Modal>
+          <form onSubmit={verifyPin} className="space-y-3">
+            <div className="flex justify-between items-center border-b pb-2">
+              <h3 className="text-sm font-bold">PIN ඇතුළත් කරන්න</h3>
+              <button type="button" onClick={() => setShowPin(false)} className="text-slate-400"><i className="fa-solid fa-xmark"></i></button>
+            </div>
+            <input type="password" required autoFocus placeholder="Admin / Owner PIN" value={pinInput} onChange={e => setPinInput(e.target.value)} className={inp} />
+            {pinError && <p className="text-xs text-rose-600">{pinError}</p>}
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setShowPin(false)} className="flex-1 py-2 rounded-xl border border-slate-300 text-xs font-semibold">Cancel</button>
+              <button type="submit" className="flex-1 py-2 rounded-xl bg-emerald-700 text-white text-xs font-bold">Unlock</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {delBooking && role === 'admin' && (
+        <Modal>
+          <form onSubmit={submitDeleteRequest} className="space-y-3">
+            <h3 className="text-sm font-bold border-b pb-2">Owner වෙත Delete Request යවන්න</h3>
+            <p className="text-xs text-slate-600">Booking: <b>{delBooking.guest}</b> ({delBooking.date})</p>
+            <div><Lbl t="Delete කිරීමට හේතුව" /><textarea rows="2" placeholder="උදා: Guest cancelled" value={delReason} onChange={e => setDelReason(e.target.value)} className={inp}></textarea></div>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setDelBooking(null)} className="flex-1 py-2 rounded-xl border border-slate-300 text-xs font-semibold">Cancel</button>
+              <button type="submit" className="flex-1 py-2 rounded-xl bg-amber-500 text-slate-900 text-xs font-bold">Request යවන්න</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {editingBooking && isAdmin && (
+        <Modal>
+          <h3 className="text-sm font-bold border-b pb-2 mb-3">Booking Edit කරන්න</h3>
+          <BookingForm f={editingBooking} set={setEditingBooking} cfg={roomConfig} onSubmit={(e) => { e.preventDefault(); saveBooking(editingBooking, false); }} onCancel={() => setEditingBooking(null)} submitLabel="Save Changes" />
+        </Modal>
+      )}
+
+      {editingExpense && isAdmin && (
+        <Modal>
+          <h3 className="text-sm font-bold border-b pb-2 mb-3">වියදම Edit කරන්න</h3>
+          <ExpenseForm f={editingExpense} set={setEditingExpense} onSubmit={(e) => { e.preventDefault(); saveExpense(editingExpense, false); }} onCancel={() => setEditingExpense(null)} submitLabel="Save Changes" />
+        </Modal>
+      )}
+
+      <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t border-slate-200 flex justify-around py-2 z-20 shadow-lg">
+        {navItems.map(([id, icon, label]) => (
+          <button key={id} onClick={() => setTab(id)} className={`flex flex-col items-center text-[11px] px-2 py-1 ${tab === id ? 'text-emerald-700 font-bold' : 'text-slate-500'}`}>
+            <i className={`fa-solid ${icon} text-base mb-0.5`}></i><span>{label}</span>
+          </button>
+        ))}
+      </nav>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
 </body>
 </html>
