@@ -149,6 +149,23 @@
       return FIREBASE_DB_URL.trim().replace(/\/+$/, '');
     }
 
+    // Convert Firebase object map ({ id1: item1, id2: item2 }) or array into clean array
+    function firebaseCollectionToArray(raw) {
+      if (!raw) return [];
+      if (Array.isArray(raw)) {
+        return raw.filter(item => item && typeof item === 'object' && item.id != null);
+      }
+      if (typeof raw === 'object') {
+        return Object.entries(raw)
+          .filter(([, val]) => val && typeof val === 'object')
+          .map(([key, val]) => ({
+            ...val,
+            id: val.id != null ? val.id : (Number.isNaN(Number(key)) ? key : Number(key))
+          }));
+      }
+      return [];
+    }
+
     function App() {
       const [role, setRole] = useState(() => {
         const saved = localStorage.getItem('gs_user_role_v1');
@@ -224,19 +241,7 @@
         date: todayISO()
       });
 
-      // Track hash per section so each section syncs independently without overwriting others
-      const lastHashesRef = useRef({
-        bookings: '',
-        expenses: '',
-        deleteRequests: '',
-        roomConfig: ''
-      });
-      const pendingLocalSectionsRef = useRef({
-        bookings: false,
-        expenses: false,
-        deleteRequests: false,
-        roomConfig: false
-      });
+      const isMutatingRef = useRef(false);
 
       useEffect(() => {
         localStorage.setItem('gs_user_role_v1', role);
@@ -258,18 +263,18 @@
         localStorage.setItem('gs_expenses_v1', JSON.stringify(expenses));
       }, [expenses]);
 
-      const pushSectionToFirebase = useCallback(async (sectionKey, value) => {
+      // Write or delete a single record by ID in Firebase
+      const upsertRecord = useCallback(async (collectionName, id, recordObj) => {
         const baseUrl = getCleanFirebaseBaseUrl();
-        if (!baseUrl) return false;
+        if (!baseUrl) return true;
+        isMutatingRef.current = true;
         try {
-          const res = await fetch(`${baseUrl}/greenStayNegombo/${sectionKey}.json`, {
+          const res = await fetch(`${baseUrl}/greenStayNegombo/${collectionName}/${id}.json`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(value)
+            body: JSON.stringify(recordObj)
           });
           if (res.ok) {
-            lastHashesRef.current[sectionKey] = JSON.stringify(value);
-            pendingLocalSectionsRef.current[sectionKey] = false;
             setSyncStatus('Live');
             return true;
           }
@@ -278,15 +283,66 @@
         } catch (err) {
           setSyncStatus('Offline');
           return false;
+        } finally {
+          setTimeout(() => { isMutatingRef.current = false; }, 300);
         }
       }, []);
 
-      const pullAllFromFirebase = useCallback(async () => {
+      const deleteRecordById = useCallback(async (collectionName, id) => {
+        const baseUrl = getCleanFirebaseBaseUrl();
+        if (!baseUrl) return true;
+        isMutatingRef.current = true;
+        try {
+          const res = await fetch(`${baseUrl}/greenStayNegombo/${collectionName}/${id}.json`, {
+            method: 'DELETE'
+          });
+          if (res.ok) {
+            setSyncStatus('Live');
+            return true;
+          }
+          setSyncStatus('Error');
+          return false;
+        } catch (err) {
+          setSyncStatus('Offline');
+          return false;
+        } finally {
+          setTimeout(() => { isMutatingRef.current = false; }, 300);
+        }
+      }, []);
+
+      const pushRoomConfig = useCallback(async (nextConfig) => {
+        const baseUrl = getCleanFirebaseBaseUrl();
+        if (!baseUrl) return true;
+        isMutatingRef.current = true;
+        try {
+          const res = await fetch(`${baseUrl}/greenStayNegombo/roomConfig.json`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(nextConfig)
+          });
+          if (res.ok) {
+            setSyncStatus('Live');
+            return true;
+          }
+          setSyncStatus('Error');
+          return false;
+        } catch (err) {
+          setSyncStatus('Offline');
+          return false;
+        } finally {
+          setTimeout(() => { isMutatingRef.current = false; }, 300);
+        }
+      }, []);
+
+      // Fetch latest server state and replace local state cleanly (server is source of truth)
+      const pullFromServer = useCallback(async () => {
         const baseUrl = getCleanFirebaseBaseUrl();
         if (!baseUrl) {
           setSyncStatus('Local');
           return null;
         }
+        if (isMutatingRef.current) return null;
+
         try {
           const res = await fetch(`${baseUrl}/greenStayNegombo.json?t=${Date.now()}`, {
             cache: 'no-store'
@@ -294,36 +350,20 @@
           if (!res.ok) throw new Error('Network error');
           const data = await res.json();
 
-          const remoteBookings = Array.isArray(data?.bookings)
-            ? data.bookings.map(b => ({ ...b, source: normalizeSource(b.source) }))
-            : [];
-          const remoteExpenses = Array.isArray(data?.expenses) ? data.expenses : [];
-          const remoteRequests = Array.isArray(data?.deleteRequests) ? data.deleteRequests : [];
+          if (isMutatingRef.current) return null;
+
+          const remoteBookings = firebaseCollectionToArray(data?.bookings)
+            .map(b => ({ ...b, source: normalizeSource(b.source) }));
+          const remoteExpenses = firebaseCollectionToArray(data?.expenses);
+          const remoteRequests = firebaseCollectionToArray(data?.deleteRequests);
           const remoteRooms = data?.roomConfig && typeof data.roomConfig === 'object'
             ? data.roomConfig
             : DEFAULT_ROOM_CONFIG;
 
-          const bHash = JSON.stringify(remoteBookings);
-          const eHash = JSON.stringify(remoteExpenses);
-          const rHash = JSON.stringify(remoteRequests);
-          const cHash = JSON.stringify(remoteRooms);
-
-          if (!pendingLocalSectionsRef.current.bookings && bHash !== lastHashesRef.current.bookings) {
-            lastHashesRef.current.bookings = bHash;
-            setBookings(remoteBookings);
-          }
-          if (!pendingLocalSectionsRef.current.expenses && eHash !== lastHashesRef.current.expenses) {
-            lastHashesRef.current.expenses = eHash;
-            setExpenses(remoteExpenses);
-          }
-          if (!pendingLocalSectionsRef.current.deleteRequests && rHash !== lastHashesRef.current.deleteRequests) {
-            lastHashesRef.current.deleteRequests = rHash;
-            setDeleteRequests(remoteRequests);
-          }
-          if (!pendingLocalSectionsRef.current.roomConfig && cHash !== lastHashesRef.current.roomConfig) {
-            lastHashesRef.current.roomConfig = cHash;
-            setRoomConfig(remoteRooms);
-          }
+          setBookings(prev => JSON.stringify(prev) === JSON.stringify(remoteBookings) ? prev : remoteBookings);
+          setExpenses(prev => JSON.stringify(prev) === JSON.stringify(remoteExpenses) ? prev : remoteExpenses);
+          setDeleteRequests(prev => JSON.stringify(prev) === JSON.stringify(remoteRequests) ? prev : remoteRequests);
+          setRoomConfig(prev => JSON.stringify(prev) === JSON.stringify(remoteRooms) ? prev : remoteRooms);
 
           setSyncStatus('Live');
           return { remoteBookings, remoteExpenses, remoteRequests, remoteRooms };
@@ -333,58 +373,23 @@
         }
       }, []);
 
-      // Initial pull + polling every 3s
       useEffect(() => {
         const baseUrl = getCleanFirebaseBaseUrl();
         if (!baseUrl) {
           setSyncStatus('Local');
           return;
         }
-        let active = true;
-        const run = async () => {
-          if (!active) return;
-          await pullAllFromFirebase();
+        let cancelled = false;
+        const tick = async () => {
+          if (!cancelled) await pullFromServer();
         };
-        run();
-        const timer = setInterval(run, 3000);
+        tick();
+        const intervalId = setInterval(tick, 3000);
         return () => {
-          active = false;
-          clearInterval(timer);
+          cancelled = true;
+          clearInterval(intervalId);
         };
-      }, [pullAllFromFirebase]);
-
-      // Push only changed sections
-      useEffect(() => {
-        const bHash = JSON.stringify(bookings);
-        if (bHash !== lastHashesRef.current.bookings) {
-          pendingLocalSectionsRef.current.bookings = true;
-          pushSectionToFirebase('bookings', bookings);
-        }
-      }, [bookings, pushSectionToFirebase]);
-
-      useEffect(() => {
-        const eHash = JSON.stringify(expenses);
-        if (eHash !== lastHashesRef.current.expenses) {
-          pendingLocalSectionsRef.current.expenses = true;
-          pushSectionToFirebase('expenses', expenses);
-        }
-      }, [expenses, pushSectionToFirebase]);
-
-      useEffect(() => {
-        const rHash = JSON.stringify(deleteRequests);
-        if (rHash !== lastHashesRef.current.deleteRequests) {
-          pendingLocalSectionsRef.current.deleteRequests = true;
-          pushSectionToFirebase('deleteRequests', deleteRequests);
-        }
-      }, [deleteRequests, pushSectionToFirebase]);
-
-      useEffect(() => {
-        const cHash = JSON.stringify(roomConfig);
-        if (cHash !== lastHashesRef.current.roomConfig) {
-          pendingLocalSectionsRef.current.roomConfig = true;
-          pushSectionToFirebase('roomConfig', roomConfig);
-        }
-      }, [roomConfig, pushSectionToFirebase]);
+      }, [pullFromServer]);
 
       useEffect(() => {
         if (!isAdmin && (tab === 'add' || tab === 'bookings' || tab === 'expenses' || tab === 'rooms')) {
@@ -452,20 +457,20 @@
         }
       };
 
-      const adjustRoomCount = (key, delta) => {
+      const adjustRoomCount = async (key, delta) => {
         if (!isAdmin) return;
-        setRoomConfig(prev => {
-          const current = prev[key];
-          if (!current) return prev;
-          const nextTotal = Math.max(0, Number(current.total || 0) + delta);
-          return {
-            ...prev,
-            [key]: { ...current, total: nextTotal }
-          };
-        });
+        const current = roomConfig[key];
+        if (!current) return;
+        const nextTotal = Math.max(0, Number(current.total || 0) + delta);
+        const nextConfig = {
+          ...roomConfig,
+          [key]: { ...current, total: nextTotal }
+        };
+        setRoomConfig(nextConfig);
+        await pushRoomConfig(nextConfig);
       };
 
-      const handleAddRoomType = (e) => {
+      const handleAddRoomType = async (e) => {
         e.preventDefault();
         if (!isAdmin) return;
         const cleanName = newRoomName.trim();
@@ -474,15 +479,17 @@
         if (roomConfig[cleanName]) return alert('මෙම Room වර්ගය දැනටමත් පවතී.');
 
         const style = EXTRA_STYLES[Object.keys(roomConfig).length % EXTRA_STYLES.length];
-        setRoomConfig(prev => ({
-          ...prev,
+        const nextConfig = {
+          ...roomConfig,
           [cleanName]: {
             label: cleanName,
             total: count,
             color: style.color,
             soft: style.soft
           }
-        }));
+        };
+        setRoomConfig(nextConfig);
+        await pushRoomConfig(nextConfig);
         setNewRoomName('');
         setNewRoomTotal('1');
       };
@@ -554,7 +561,7 @@
           return alert('කරුණාකර Guest Name සහ Price ඇතුළත් කරන්න.');
         }
 
-        const latest = await pullAllFromFirebase();
+        const latest = await pullFromServer();
         const baseList = latest ? latest.remoteBookings : bookings;
 
         const isCustom = formData.type === 'Custom Time';
@@ -589,9 +596,8 @@
           return alert(conflictMessage);
         }
 
-        const nextList = [newBooking, ...baseList];
-        setBookings(nextList);
-        await pushSectionToFirebase('bookings', nextList);
+        setBookings([newBooking, ...baseList]);
+        await upsertRecord('bookings', newBooking.id, newBooking);
 
         setFormData({
           guest: '',
@@ -618,7 +624,7 @@
           return alert('කරුණාකර Guest Name සහ Price ඇතුළත් කරන්න.');
         }
 
-        const latest = await pullAllFromFirebase();
+        const latest = await pullFromServer();
         const baseList = latest ? latest.remoteBookings : bookings;
 
         const isCustom = editingBooking.type === 'Custom Time';
@@ -653,33 +659,33 @@
           return alert(conflictMessage);
         }
 
-        const existsInRemote = baseList.some(b => b.id === editingBooking.id);
-        const nextList = existsInRemote
-          ? baseList.map(b => (b.id === editingBooking.id ? updatedBooking : b))
+        const exists = baseList.some(b => String(b.id) === String(editingBooking.id));
+        const nextList = exists
+          ? baseList.map(b => (String(b.id) === String(editingBooking.id) ? updatedBooking : b))
           : [updatedBooking, ...baseList];
 
         setBookings(nextList);
-        await pushSectionToFirebase('bookings', nextList);
+        await upsertRecord('bookings', updatedBooking.id, updatedBooking);
         setEditingBooking(null);
       };
 
       const selectAttendanceStatus = async (id, status) => {
         if (!isAdmin) return;
-        const latest = await pullAllFromFirebase();
-        const baseList = latest ? latest.remoteBookings : bookings;
-        const nextList = baseList.map(b => (b.id === id ? { ...b, status } : b));
-        setBookings(nextList);
-        await pushSectionToFirebase('bookings', nextList);
+        const target = bookings.find(b => String(b.id) === String(id));
+        if (!target) return;
+        const updated = { ...target, status };
+        setBookings(bookings.map(b => (String(b.id) === String(id) ? updated : b)));
+        await upsertRecord('bookings', updated.id, updated);
       };
 
       const toggleAttendanceBadge = async (id, currentStatus) => {
         if (!isAdmin) return;
         const nextStatus = currentStatus === 'arrived' ? 'not_arrived' : 'arrived';
-        const latest = await pullAllFromFirebase();
-        const baseList = latest ? latest.remoteBookings : bookings;
-        const nextList = baseList.map(b => (b.id === id ? { ...b, status: nextStatus } : b));
-        setBookings(nextList);
-        await pushSectionToFirebase('bookings', nextList);
+        const target = bookings.find(b => String(b.id) === String(id));
+        if (!target) return;
+        const updated = { ...target, status: nextStatus };
+        setBookings(bookings.map(b => (String(b.id) === String(id) ? updated : b)));
+        await upsertRecord('bookings', updated.id, updated);
       };
 
       const openDeleteRequestModal = (booking) => {
@@ -691,10 +697,10 @@
         e.preventDefault();
         if (!isAdmin || !requestingDeleteBooking) return;
 
-        const latest = await pullAllFromFirebase();
+        const latest = await pullFromServer();
         const baseRequests = latest ? latest.remoteRequests : deleteRequests;
 
-        const alreadyRequested = baseRequests.some(r => r.bookingId === requestingDeleteBooking.id);
+        const alreadyRequested = baseRequests.some(r => String(r.bookingId) === String(requestingDeleteBooking.id));
         if (alreadyRequested) {
           alert('මෙම Booking එක සඳහා Delete Request එකක් දැනටමත් Owner වෙත යවා ඇත.');
           setRequestingDeleteBooking(null);
@@ -716,9 +722,8 @@
           }
         };
 
-        const nextRequests = [newReq, ...baseRequests];
-        setDeleteRequests(nextRequests);
-        await pushSectionToFirebase('deleteRequests', nextRequests);
+        setDeleteRequests([newReq, ...baseRequests]);
+        await upsertRecord('deleteRequests', newReq.id, newReq);
         setRequestingDeleteBooking(null);
         setDeleteReason('');
         alert('Delete Request එක Owner වෙත යවන ලදී. Owner approve කළ පසු delete වනු ඇත.');
@@ -727,42 +732,28 @@
       const ownerDeleteBooking = async (id) => {
         if (!isOwner) return;
         if (confirm('Owner ලෙස මෙම Booking එක සම්පූර්ණයෙන්ම ඉවත් කිරීමට අවශ්‍යද?')) {
-          const latest = await pullAllFromFirebase();
-          const baseBookings = latest ? latest.remoteBookings : bookings;
-          const baseRequests = latest ? latest.remoteRequests : deleteRequests;
-
-          const nextBookings = baseBookings.filter(b => b.id !== id);
-          const nextRequests = baseRequests.filter(r => r.bookingId !== id);
-
-          setBookings(nextBookings);
-          setDeleteRequests(nextRequests);
-          await pushSectionToFirebase('bookings', nextBookings);
-          await pushSectionToFirebase('deleteRequests', nextRequests);
+          const matchingReqs = deleteRequests.filter(r => String(r.bookingId) === String(id));
+          setBookings(prev => prev.filter(b => String(b.id) !== String(id)));
+          setDeleteRequests(prev => prev.filter(r => String(r.bookingId) !== String(id)));
+          await deleteRecordById('bookings', id);
+          for (const r of matchingReqs) {
+            await deleteRecordById('deleteRequests', r.id);
+          }
         }
       };
 
       const handleApproveDeleteRequest = async (req) => {
         if (!isOwner) return;
-        const latest = await pullAllFromFirebase();
-        const baseBookings = latest ? latest.remoteBookings : bookings;
-        const baseRequests = latest ? latest.remoteRequests : deleteRequests;
-
-        const nextBookings = baseBookings.filter(b => b.id !== req.bookingId);
-        const nextRequests = baseRequests.filter(r => r.id !== req.id);
-
-        setBookings(nextBookings);
-        setDeleteRequests(nextRequests);
-        await pushSectionToFirebase('bookings', nextBookings);
-        await pushSectionToFirebase('deleteRequests', nextRequests);
+        setBookings(prev => prev.filter(b => String(b.id) !== String(req.bookingId)));
+        setDeleteRequests(prev => prev.filter(r => String(r.id) !== String(req.id)));
+        await deleteRecordById('bookings', req.bookingId);
+        await deleteRecordById('deleteRequests', req.id);
       };
 
       const handleRejectDeleteRequest = async (reqId) => {
         if (!isOwner) return;
-        const latest = await pullAllFromFirebase();
-        const baseRequests = latest ? latest.remoteRequests : deleteRequests;
-        const nextRequests = baseRequests.filter(r => r.id !== reqId);
-        setDeleteRequests(nextRequests);
-        await pushSectionToFirebase('deleteRequests', nextRequests);
+        setDeleteRequests(prev => prev.filter(r => String(r.id) !== String(reqId)));
+        await deleteRecordById('deleteRequests', reqId);
       };
 
       const handleAddExpense = async (e) => {
@@ -772,7 +763,7 @@
           return alert('කරුණාකර වියදම් විස්තරය සහ මුදල ඇතුළත් කරන්න.');
         }
 
-        const latest = await pullAllFromFirebase();
+        const latest = await pullFromServer();
         const baseExpenses = latest ? latest.remoteExpenses : expenses;
 
         const newExpense = {
@@ -782,9 +773,8 @@
           date: expForm.date
         };
 
-        const nextExpenses = [newExpense, ...baseExpenses];
-        setExpenses(nextExpenses);
-        await pushSectionToFirebase('expenses', nextExpenses);
+        setExpenses([newExpense, ...baseExpenses]);
+        await upsertRecord('expenses', newExpense.id, newExpense);
         setExpenseFilterMonth(newExpense.date.slice(0, 7));
         setExpForm({
           title: '',
@@ -800,7 +790,7 @@
           return alert('කරුණාකර වියදම් විස්තරය සහ මුදල ඇතුළත් කරන්න.');
         }
 
-        const latest = await pullAllFromFirebase();
+        const latest = await pullFromServer();
         const baseExpenses = latest ? latest.remoteExpenses : expenses;
 
         const cleanedItem = {
@@ -810,24 +800,21 @@
           date: editingExpense.date
         };
 
-        const exists = baseExpenses.some(ex => ex.id === editingExpense.id);
+        const exists = baseExpenses.some(ex => String(ex.id) === String(editingExpense.id));
         const nextExpenses = exists
-          ? baseExpenses.map(ex => (ex.id === editingExpense.id ? cleanedItem : ex))
+          ? baseExpenses.map(ex => (String(ex.id) === String(editingExpense.id) ? cleanedItem : ex))
           : [cleanedItem, ...baseExpenses];
 
         setExpenses(nextExpenses);
-        await pushSectionToFirebase('expenses', nextExpenses);
+        await upsertRecord('expenses', cleanedItem.id, cleanedItem);
         setEditingExpense(null);
       };
 
       const deleteExpense = async (id) => {
         if (!isAdmin) return;
         if (confirm('මෙම වියදම ඉවත් කිරීමට අවශ්‍යද?')) {
-          const latest = await pullAllFromFirebase();
-          const baseExpenses = latest ? latest.remoteExpenses : expenses;
-          const nextExpenses = baseExpenses.filter(ex => ex.id !== id);
-          setExpenses(nextExpenses);
-          await pushSectionToFirebase('expenses', nextExpenses);
+          setExpenses(prev => prev.filter(ex => String(ex.id) !== String(id)));
+          await deleteRecordById('expenses', id);
         }
       };
 
@@ -952,7 +939,7 @@
         const price = Number(b.price) || 0;
         const balance = Math.max(0, price - adv);
         const srcLabel = normalizeSource(b.source);
-        const hasPendingDeleteReq = deleteRequests.some(r => r.bookingId === b.id);
+        const hasPendingDeleteReq = deleteRequests.some(r => String(r.bookingId) === String(b.id));
 
         return (
           <div key={b.id} className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm space-y-2">
@@ -1091,7 +1078,7 @@
             <div className="flex items-center gap-1.5">
               <button
                 type="button"
-                onClick={() => pullAllFromFirebase()}
+                onClick={() => pullFromServer()}
                 title="Refresh Data"
                 className="text-xs px-2.5 py-1.5 rounded-full bg-emerald-800 text-emerald-100 border border-emerald-600 hover:bg-emerald-900"
               >
