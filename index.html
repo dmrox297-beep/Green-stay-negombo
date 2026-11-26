@@ -119,7 +119,16 @@ const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Numb
 const workedMins = (i, o) => { const a = toMin(i), b = toMin(o); return a == null || b == null ? 0 : (b - a + 1440) % 1440; };
 const fmtH = (m) => `${Math.floor(m / 60)}h ${pad(m % 60)}m`;
 const nowTime = () => { const d = new Date(); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
-const leaveText = (l) => (l.fromTime || l.toTime) ? `${l.fromTime || '--:--'} → ${l.toTime || '--:--'}` : 'සම්පූර්ණ දවස';
+const DEF_IN = '08:00', DEF_OUT = '18:00';
+const isPresent = (a) => a.status ? a.status === 'present' : !!(a.inTime || a.outTime);
+// නිවාඩුවක කාල පරාසය [start, end) -- පරණ (එක දවසක) සටහන් වලටත් වැඩ කරනවා
+const leaveRange = (l) => {
+  const fd = l.fromDate || l.date, td = l.toDate || fd;
+  const st = ts(fd, l.fromTime || '00:00');
+  const en = l.toTime ? ts(td, l.toTime) : ts(td, '00:00', 1);
+  return [st, Math.max(en, st)];
+};
+const leaveText = (l) => { const fd = l.fromDate || l.date, td = l.toDate || fd; return `${fd} ${l.fromTime || '00:00'} → ${td} ${l.toTime || '24:00'}`; };
 
 function downloadCSV(name, rows) {
   const csv = '\uFEFF' + rows.map(r => r.map(c => `"${String(c ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
@@ -503,7 +512,8 @@ function App() {
   const [attDate, setAttDate] = useState(todayISO());
   const [staffMonth, setStaffMonth] = useState(currentMonthISO());
   const [newStaff, setNewStaff] = useState('');
-  const [leaveForm, setLeaveForm] = useState({ staffId: '', date: todayISO(), fromTime: '', toTime: '', note: '' });
+  const [newStaffType, setNewStaffType] = useState('daily');
+  const [leaveForm, setLeaveForm] = useState({ staffId: '', fromDate: todayISO(), fromTime: '', toDate: todayISO(), toTime: '', note: '' });
   const [editingAtt, setEditingAtt] = useState(null);
   const [editingLeave, setEditingLeave] = useState(null);
   const [reqTarget, setReqTarget] = useState(null);
@@ -529,7 +539,7 @@ function App() {
     await write(`${col}/${id}`, null);
     await clearReqs(col, id);
   };
-  const startEdit = (col, rec) => col === 'expenses' ? setEditingExpense({ ...rec }) : col === 'attendance' ? setEditingAtt({ ...rec }) : setEditingLeave({ ...rec });
+  const startEdit = (col, rec) => col === 'expenses' ? setEditingExpense({ ...rec }) : col === 'attendance' ? setEditingAtt({ ...rec }) : setEditingLeave({ ...rec, fromDate: rec.fromDate || rec.date, toDate: rec.toDate || rec.fromDate || rec.date });
   const openFromReq = (req) => {
     const rec = ({ expenses, attendance, leaves })[req.col].find(x => String(x.id) === String(req.recId));
     if (!rec) { alert('මෙම සටහන දැන් නැහැ.'); return rejectChangeReq(req.id); }
@@ -565,7 +575,7 @@ function App() {
     const name = newStaff.trim();
     if (!isAdmin || !name) return;
     if (staff.some(x => x.name.toLowerCase() === name.toLowerCase())) return alert('මෙම නම දැනටමත් ඇත.');
-    const st = { id: Date.now(), name };
+    const st = { id: Date.now(), name, type: newStaffType };
     setStaff(p => [...p, st]); setNewStaff('');
     await write(`staff/${st.id}`, st);
   };
@@ -577,62 +587,103 @@ function App() {
     setStaff(p => p.map(x => x.id === st.id ? u : x));
     await write(`staff/${st.id}`, u);
   };
+  const toggleStaffType = async (st) => {
+    if (!isOwner) return;
+    const next = st.type === 'resident' ? 'daily' : 'resident';
+    if (!confirm(`${st.name} ගේ කාණ්ඩය "${next === 'resident' ? 'නැවතී වැඩ කරන' : 'දිනපතා පැමිණෙන'}" ලෙස වෙනස් කරන්නද?`)) return;
+    const u = { ...st, type: next };
+    setStaff(p => p.map(x => x.id === st.id ? u : x));
+    await write(`staff/${st.id}`, u);
+  };
+  const staffTools = (st) => (
+    <span className="flex gap-3 text-xs text-slate-500">
+      <button type="button" onClick={() => renameStaff(st)}><i className="fa-solid fa-pen"></i></button>
+      <button type="button" onClick={() => toggleStaffType(st)}><i className="fa-solid fa-right-left"></i></button>
+      <button type="button" onClick={() => removeStaff(st)}><i className="fa-solid fa-trash"></i></button>
+    </span>);
   const removeStaff = async (st) => {
     if (!isOwner || !confirm(`${st.name} ඉවත් කරන්නද? (පැරණි වාර්තා මැකෙන්නේ නැහැ)`)) return;
     setStaff(p => p.filter(x => x.id !== st.id));
     await write(`staff/${st.id}`, null);
   };
-  // Admin ට හිස් In / Out එක පමණක් පුරවන්න පුළුවන්. දැනටමත් ඇති වේලාවක් වෙනස් කරන්න Owner ට පමණි.
-  const markAtt = async (st, date, field, time) => {
-    if (!isAdmin || !time) return;
+  // පැමිණියා / නොපැමිණි ඔබද්දී එදිනට වාර්තාවක් සෑදෙනවා. දැනටමත් ඇති වාර්තාවක් වෙනස් කරන්න Owner ට පමණි.
+  const markAtt = async (st, date, status) => {
+    if (!isAdmin) return;
     const id = `a_${st.id}_${date}`;
-    const cur = attendance.find(a => a.id === id);
-    if (cur && cur[field]) return alert('මෙය දැනටමත් සටහන් කර ඇත. වෙනස් කිරීමට Owner ට Request කරන්න.');
-    const rec = { ...(cur || { id, staffId: st.id, staffName: st.name, date, inTime: '', outTime: '' }), [field]: time };
+    if (attendance.some(a => a.id === id)) return alert('මෙම දිනයට දැනටමත් සටහන් කර ඇත. වෙනස් කිරීමට Owner ට Request කරන්න.');
+    const present = status === 'present';
+    const rec = { id, staffId: st.id, staffName: st.name, date, status,
+      inTime: present ? (markTimes[st.id + 'inTime'] || DEF_IN) : '', outTime: present ? (markTimes[st.id + 'outTime'] || DEF_OUT) : '' };
     setAttendance(p => [rec, ...p.filter(a => a.id !== id)]);
     await write(`attendance/${id}`, rec);
   };
-  const saveAtt = async (e) => {
+    const saveAtt = async (e) => {
     e.preventDefault();
     if (!isOwner) return;
-    const rec = { ...editingAtt, inTime: editingAtt.inTime || '', outTime: editingAtt.outTime || '' };
+    const pr = isPresent(editingAtt);
+    const rec = { ...editingAtt, status: pr ? 'present' : 'absent', inTime: pr ? (editingAtt.inTime || '') : '', outTime: pr ? (editingAtt.outTime || '') : '' };
     setAttendance(p => p.map(a => a.id === rec.id ? rec : a)); setEditingAtt(null);
     await write(`attendance/${rec.id}`, rec);
     await clearReqs('attendance', rec.id);
+  };
+  const buildLeave = (f) => {
+    const l = { ...f, toDate: f.toDate || f.fromDate, fromTime: f.fromTime || '', toTime: f.toTime || '', note: (f.note || '').trim() };
+    l.date = l.fromDate;
+    const [a, b] = leaveRange(l);
+    if (b <= a) { alert('"දක්වා" දිනය/වේලාව "සිට" ට පසුව විය යුතුයි.'); return null; }
+    return l;
   };
   const addLeave = async (e) => {
     e.preventDefault();
     if (!isAdmin) return;
     const st = staff.find(x => String(x.id) === String(leaveForm.staffId));
     if (!st) return alert('Staff කෙනෙක් තෝරන්න.');
-    const lv = { id: Date.now(), staffId: st.id, staffName: st.name, date: leaveForm.date, fromTime: leaveForm.fromTime, toTime: leaveForm.toTime, note: leaveForm.note.trim() };
-    setLeaves(p => [lv, ...p]); setStaffMonth(lv.date.slice(0, 7));
+    const lv = buildLeave({ ...leaveForm, id: Date.now(), staffId: st.id, staffName: st.name });
+    if (!lv) return;
+    setLeaves(p => [lv, ...p]); setStaffMonth(lv.fromDate.slice(0, 7));
     setLeaveForm({ ...leaveForm, fromTime: '', toTime: '', note: '' });
     await write(`leaves/${lv.id}`, lv);
   };
   const saveLeave = async (e) => {
     e.preventDefault();
     if (!isOwner) return;
-    const lv = { ...editingLeave };
+    const lv = buildLeave(editingLeave);
+    if (!lv) return;
     setLeaves(p => p.map(x => x.id === lv.id ? lv : x)); setEditingLeave(null);
     await write(`leaves/${lv.id}`, lv);
     await clearReqs('leaves', lv.id);
   };
 
-  const dayRows = staff.map(x => ({
-    st: x, rec: attendance.find(a => a.id === `a_${x.id}_${attDate}`),
-    lv: leaves.filter(l => l.date === attDate && String(l.staffId) === String(x.id))
-  }));
-  const attMonth = attendance.filter(a => a.date && a.date.startsWith(staffMonth)).sort((a, b) => a.date.localeCompare(b.date));
-  const leaveMonth = leaves.filter(l => l.date && l.date.startsWith(staffMonth)).sort((a, b) => a.date.localeCompare(b.date));
-  const staffSummary = staff.map(x => {
+    const sm = staffMonth || currentMonthISO();
+  const dailyStaff = staff.filter(x => x.type !== 'resident');
+  const residentStaff = staff.filter(x => x.type === 'resident');
+  const recFor = (x) => attendance.find(a => a.id === `a_${x.id}_${attDate}`);
+  const monthRange = (() => { const [y, m] = sm.split('-').map(Number); return [ts(`${sm}-01`, '00:00'), ts(`${sm}-01`, '00:00', new Date(y, m, 0).getDate())]; })();
+  const attMonth = attendance.filter(a => a.date && a.date.startsWith(sm)).sort((a, b) => a.date.localeCompare(b.date));
+  const leaveMonth = leaves.filter(l => overlaps(leaveRange(l), monthRange)).sort((a, b) => leaveRange(a)[0] - leaveRange(b)[0]);
+  const dailySummary = dailyStaff.map(x => {
     const A = attMonth.filter(a => String(a.staffId) === String(x.id));
-    return { st: x, A, L: leaveMonth.filter(l => String(l.staffId) === String(x.id)), mins: A.reduce((t, a) => t + workedMins(a.inTime, a.outTime), 0) };
+    const Pr = A.filter(isPresent);
+    return { st: x, A, days: Pr.length, absent: A.length - Pr.length, mins: Pr.reduce((t, a) => t + workedMins(a.inTime, a.outTime), 0) };
   });
-  const exportStaff = () => downloadCSV(`staff-${staffMonth}.csv`, [
-    ['Type', 'Staff', 'Date', 'In / From', 'Out / To', 'Hours / Note'],
-    ...attMonth.map(a => ['Attendance', staffNm(a), a.date, a.inTime, a.outTime, a.inTime && a.outTime ? fmtH(workedMins(a.inTime, a.outTime)) : '']),
-    ...leaveMonth.map(l => ['Leave', staffNm(l), l.date, l.fromTime, l.toTime, l.note])
+  // මාසය තුළට කැපූ නිවාඩු දින සහ පැය
+  const leaveStats = (list) => {
+    const days = new Set(); let mins = 0;
+    list.forEach(l => {
+      const [s0, e0] = leaveRange(l);
+      const a = Math.max(s0, monthRange[0]), b = Math.min(e0, monthRange[1]);
+      if (b > a) { mins += b - a; for (let d = Math.floor(a / 1440); d <= Math.floor((b - 1) / 1440); d++) days.add(d); }
+    });
+    return { days: days.size, mins };
+  };
+  const residentSummary = residentStaff.map(x => {
+    const L = leaveMonth.filter(l => String(l.staffId) === String(x.id));
+    return { st: x, L, ...leaveStats(L) };
+  });
+  const exportStaff = () => downloadCSV(`staff-${sm}.csv`, [
+    ['Type', 'Staff', 'From', 'To', 'Status', 'Hours', 'Note'],
+    ...attMonth.map(a => ['Attendance', staffNm(a), `${a.date} ${a.inTime || ''}`, `${a.date} ${a.outTime || ''}`, isPresent(a) ? 'Present' : 'Absent', isPresent(a) ? fmtH(workedMins(a.inTime, a.outTime)) : '', '']),
+    ...leaveMonth.map(l => { const [a, b] = leaveRange(l); return ['Leave', staffNm(l), `${l.fromDate || l.date} ${l.fromTime || ''}`, `${l.toDate || l.fromDate || l.date} ${l.toTime || ''}`, 'Leave', fmtH(b - a), l.note]; })
   ]);
 
   // ---------- derived ----------
@@ -927,54 +978,87 @@ function App() {
 
         {tab === 'staff' && isAdmin && (
           <div className="space-y-4">
-            <form onSubmit={addStaff} className={card + ' flex gap-2 items-end'}>
-              <div className="flex-1"><Lbl t="අලුත් Staff නමක්" /><input type="text" required placeholder="නම" value={newStaff} onChange={e => setNewStaff(e.target.value)} className={inp} /></div>
-              <button type="submit" className="bg-emerald-700 text-white font-bold px-4 py-2.5 rounded-lg text-sm">Add</button>
+            <form onSubmit={addStaff} className={card + ' space-y-3'}>
+              <h2 className="text-sm font-bold border-b pb-2">අලුත් Staff කෙනෙක්</h2>
+              <div><Lbl t="නම" /><input type="text" required placeholder="නම" value={newStaff} onChange={e => setNewStaff(e.target.value)} className={inp} /></div>
+              <div><Lbl t="කාණ්ඩය" /><select value={newStaffType} onChange={e => setNewStaffType(e.target.value)} className={inp}>
+                <option value="daily">දිනපතා පැමිණෙන</option><option value="resident">නැවතී වැඩ කරන</option></select></div>
+              <button type="submit" className="w-full bg-emerald-700 text-white font-bold py-2.5 rounded-xl text-sm">Add</button>
             </form>
 
             <div className={card + ' space-y-3'}>
               <div className="flex items-center justify-between gap-2 border-b pb-2">
-                <h2 className="text-sm font-bold">දෛනික In / Out</h2>
-                <input type="date" value={attDate} onChange={e => setAttDate(e.target.value)} className="text-xs font-bold border border-slate-300 rounded-lg px-2 py-1.5" />
+                <h2 className="text-sm font-bold">දිනපතා පැමිණෙන Staff</h2>
+                <input type="date" value={attDate} onChange={e => { setAttDate(e.target.value); setMarkTimes({}); }} className="text-xs font-bold border border-slate-300 rounded-lg px-2 py-1.5" />
               </div>
-              {staff.length === 0 && <p className="text-xs text-slate-500 text-center py-3">මුලින් Staff නම් Add කරන්න.</p>}
-              {dayRows.map(({ st, rec, lv }) => (
+              {dailyStaff.length === 0 && <p className="text-xs text-slate-500 text-center py-3">මෙම කාණ්ඩයේ Staff නැහැ.</p>}
+              {dailyStaff.map(st => { const rec = recFor(st); return (
                 <div key={st.id} className="border border-slate-200 rounded-xl p-2.5 space-y-2">
                   <div className="flex justify-between items-center">
                     <p className="text-sm font-bold">{st.name}</p>
-                    {isOwner && <span className="flex gap-3 text-xs text-slate-500">
-                      <button type="button" onClick={() => renameStaff(st)}><i className="fa-solid fa-pen"></i></button>
-                      <button type="button" onClick={() => removeStaff(st)}><i className="fa-solid fa-trash"></i></button>
-                    </span>}
+                    {isOwner && staffTools(st)}
                   </div>
-                  {lv.map(l => <p key={l.id} className="text-[11px] bg-amber-50 text-amber-800 border border-amber-200 rounded px-2 py-0.5">නිවාඩු: {leaveText(l)}{l.note ? ` • ${l.note}` : ''}</p>)}
-                  <div className="grid grid-cols-2 gap-2">
-                    {[['inTime', 'In'], ['outTime', 'Out']].map(([field, label]) => (
-                      <div key={field} className="bg-slate-50 rounded-lg p-2">
-                        <p className="text-xs font-semibold text-slate-600 mb-1">{label}</p>
-                        {rec && rec[field] ? <p className="text-base font-bold text-emerald-700">{rec[field]}</p> : (
-                          <div className="flex gap-1">
-                            <input type="time" value={markTimes[st.id + field] ?? nowTime()} onChange={e => setMarkTimes({ ...markTimes, [st.id + field]: e.target.value })} className={inp + ' !p-1 min-w-0'} />
-                            <button type="button" onClick={() => markAtt(st, attDate, field, markTimes[st.id + field] ?? nowTime())} className="bg-emerald-700 text-white px-2.5 rounded-lg text-xs font-bold">✓</button>
-                          </div>)}
+                  {!rec ? (
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 grid grid-cols-2 gap-2">
+                        {[['inTime', 'In', DEF_IN], ['outTime', 'Out', DEF_OUT]].map(([field, label, def]) => (
+                          <div key={field}><p className="text-[11px] font-semibold text-slate-600 mb-0.5">{label}</p>
+                            <input type="time" value={markTimes[st.id + field] ?? def} onChange={e => setMarkTimes({ ...markTimes, [st.id + field]: e.target.value })} className={inp + ' !p-1.5 min-w-0'} /></div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                  {rec && (rec.inTime || rec.outTime) && recActions('attendance', rec, `${st.name} • ${attDate} • In ${rec.inTime || '--'} / Out ${rec.outTime || '--'}`)}
-                </div>
-              ))}
+                      <div className="flex flex-col gap-1.5">
+                        <button type="button" onClick={() => markAtt(st, attDate, 'present')} className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 text-white">✅ පැමිණියා</button>
+                        <button type="button" onClick={() => markAtt(st, attDate, 'absent')} className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200">❌ නොපැමිණි</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="bg-slate-50 rounded-lg p-2">
+                      {isPresent(rec)
+                        ? <div><p className="text-xs font-bold text-emerald-700">✅ පැමිණියා</p>
+                            <p className="text-sm font-bold">{rec.inTime || '--:--'} → {rec.outTime || '--:--'} <span className="text-xs font-normal text-slate-500">({fmtH(workedMins(rec.inTime, rec.outTime))})</span></p></div>
+                        : <p className="text-xs font-bold text-rose-700">❌ නොපැමිණි</p>}
+                    </div>
+                  )}
+                  {rec && recActions('attendance', rec, `${st.name} • ${attDate} • ${isPresent(rec) ? `In ${rec.inTime || '--'} / Out ${rec.outTime || '--'}` : 'නොපැමිණි'}`)}
+                </div>); })}
+            </div>
+
+            <div className={card + ' space-y-2'}>
+              <h2 className="text-sm font-bold border-b pb-2">නැවතී වැඩ කරන Staff</h2>
+              {residentStaff.length === 0 && <p className="text-xs text-slate-500 text-center py-3">මෙම කාණ්ඩයේ Staff නැහැ.</p>}
+              {residentStaff.map(st => {
+                const lv = leaves.filter(l => String(l.staffId) === String(st.id) && overlaps(leaveRange(l), dayRange(attDate)));
+                return (
+                  <div key={st.id} className="border border-slate-200 rounded-xl p-2.5 space-y-1.5">
+                    <div className="flex justify-between items-center">
+                      <p className="text-sm font-bold">{st.name}</p>
+                      {isOwner && staffTools(st)}
+                    </div>
+                    {lv.length === 0
+                      ? <p className="text-[11px] text-emerald-700">{attDate} • නිවාඩු නැහැ</p>
+                      : lv.map(l => <p key={l.id} className="text-[11px] bg-amber-50 text-amber-800 border border-amber-200 rounded px-2 py-0.5">නිවාඩු: {leaveText(l)}</p>)}
+                  </div>);
+              })}
             </div>
 
             <form onSubmit={addLeave} className={card + ' space-y-3'}>
               <h2 className="text-sm font-bold border-b pb-2">නිවාඩු සටහන් කරන්න</h2>
+              {residentStaff.length === 0 && <p className="text-[11px] text-slate-500">නිවාඩු සටහන් කළ හැක්කේ "නැවතී වැඩ කරන" Staff ට පමණි. මුලින් එවැන්නෙකු Add කරන්න.</p>}
               <div><Lbl t="Staff" /><select required value={leaveForm.staffId} onChange={e => setLeaveForm({ ...leaveForm, staffId: e.target.value })} className={inp}>
-                <option value="">තෝරන්න</option>{staff.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</select></div>
-              <div><Lbl t="දිනය" /><input type="date" required value={leaveForm.date} onChange={e => setLeaveForm({ ...leaveForm, date: e.target.value })} className={inp} /></div>
-              <div className="grid grid-cols-2 gap-3">
-                <div><Lbl t="සිට (වේලාව)" /><input type="time" value={leaveForm.fromTime} onChange={e => setLeaveForm({ ...leaveForm, fromTime: e.target.value })} className={inp} /></div>
-                <div><Lbl t="දක්වා (වේලාව)" /><input type="time" value={leaveForm.toTime} onChange={e => setLeaveForm({ ...leaveForm, toTime: e.target.value })} className={inp} /></div>
+                <option value="">තෝරන්න</option>{residentStaff.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</select></div>
+              <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 space-y-2">
+                <p className="text-xs font-bold text-slate-700">සිට (දිනය සහ වේලාව)</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <input type="date" required value={leaveForm.fromDate} onChange={e => setLeaveForm({ ...leaveForm, fromDate: e.target.value, toDate: leaveForm.toDate < e.target.value ? e.target.value : leaveForm.toDate })} className={inp} />
+                  <input type="time" value={leaveForm.fromTime} onChange={e => setLeaveForm({ ...leaveForm, fromTime: e.target.value })} className={inp} />
+                </div>
+                <p className="text-xs font-bold text-slate-700">දක්වා (දිනය සහ වේලාව)</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <input type="date" required value={leaveForm.toDate} onChange={e => setLeaveForm({ ...leaveForm, toDate: e.target.value })} className={inp} />
+                  <input type="time" value={leaveForm.toTime} onChange={e => setLeaveForm({ ...leaveForm, toTime: e.target.value })} className={inp} />
+                </div>
+                <p className="text-[11px] text-slate-500">වේලාව හිස්නම් සම්පූර්ණ දවස ගණන් ගැනේ.</p>
               </div>
-              <p className="text-[11px] text-slate-500">වේලාව හිස්නම් සම්පූර්ණ දවසම නිවාඩුවක් ලෙස සටහන් වේ.</p>
               <div><Lbl t="හේතුව / සටහන" /><input type="text" value={leaveForm.note} onChange={e => setLeaveForm({ ...leaveForm, note: e.target.value })} className={inp} /></div>
               <button type="submit" className="w-full bg-amber-500 text-slate-900 font-bold py-2.5 rounded-xl text-sm">නිවාඩුව Save කරන්න</button>
             </form>
@@ -985,26 +1069,38 @@ function App() {
                 <input type="month" value={staffMonth} onChange={e => setStaffMonth(e.target.value)} className="text-xs font-bold border border-slate-300 rounded-lg px-2 py-1.5" />
                 <button type="button" onClick={exportStaff} className="text-xs font-bold bg-emerald-700 text-white px-3 py-1.5 rounded-lg"><i className="fa-solid fa-file-csv"></i></button>
               </div>
-              {staffSummary.map(({ st, A, L, mins }) => (
+              <h3 className="text-xs font-bold text-slate-500 uppercase">දිනපතා පැමිණෙන • වැඩ කළ දින / පැය</h3>
+              {dailySummary.length === 0 && <p className="text-xs text-slate-500 text-center py-2">Staff නැහැ.</p>}
+              {dailySummary.map(({ st, A, days, absent, mins }) => (
                 <div key={st.id} className="border border-slate-200 rounded-xl p-2.5">
                   <div className="flex justify-between items-center mb-1">
                     <p className="text-sm font-bold">{st.name}</p>
-                    <p className="text-[11px] text-slate-600">දින {A.length} • {fmtH(mins)} • නිවාඩු {L.length}</p>
+                    <p className="text-[11px] text-slate-600">වැඩ දින {days} • {fmtH(mins)} • නොපැමිණි {absent}</p>
                   </div>
                   {A.map(a => (
                     <div key={a.id} className="flex justify-between text-xs border-t border-slate-100 py-1">
-                      <span>{a.date}</span><span>{a.inTime || '--:--'} → {a.outTime || '--:--'}</span>
-                      <span className="font-semibold">{a.inTime && a.outTime ? fmtH(workedMins(a.inTime, a.outTime)) : '-'}</span>
+                      <span>{a.date}</span>
+                      {isPresent(a)
+                        ? <span>{a.inTime || '--:--'} → {a.outTime || '--:--'} <b>({fmtH(workedMins(a.inTime, a.outTime))})</b></span>
+                        : <span className="text-rose-600 font-semibold">නොපැමිණි</span>}
                     </div>
                   ))}
                 </div>
               ))}
-              <h3 className="text-xs font-bold text-slate-500 uppercase pt-1">{formatMonthLabel(staffMonth)} නිවාඩු</h3>
+              <h3 className="text-xs font-bold text-slate-500 uppercase pt-1">නැවතී වැඩ කරන • නිවාඩු දින / පැය</h3>
+              {residentSummary.length === 0 && <p className="text-xs text-slate-500 text-center py-2">Staff නැහැ.</p>}
+              {residentSummary.map(({ st, L, days, mins }) => (
+                <div key={st.id} className="border border-slate-200 rounded-xl p-2.5 flex justify-between items-center">
+                  <p className="text-sm font-bold">{st.name}</p>
+                  <p className="text-[11px] text-slate-600">නිවාඩු දින {days} • {fmtH(mins)} • වාර {L.length}</p>
+                </div>
+              ))}
+              <h3 className="text-xs font-bold text-slate-500 uppercase pt-1">{formatMonthLabel(sm)} නිවාඩු ලැයිස්තුව</h3>
               {leaveMonth.length === 0 ? <p className="text-xs text-slate-500 text-center py-2">නිවාඩු නැහැ.</p> : leaveMonth.map(l => (
                 <div key={l.id} className="bg-amber-50/50 border border-amber-200 rounded-xl p-2.5 space-y-1.5">
-                  <p className="text-sm font-bold">{staffNm(l)} <span className="text-xs font-normal text-slate-500">• {l.date}</span></p>
-                  <p className="text-xs text-slate-600">{leaveText(l)}{l.note ? ` • ${l.note}` : ''}</p>
-                  {recActions('leaves', l, `${staffNm(l)} • ${l.date} නිවාඩු (${leaveText(l)})`)}
+                  <p className="text-sm font-bold">{staffNm(l)}</p>
+                  <p className="text-xs text-slate-600">{leaveText(l)} <b>({fmtH(leaveRange(l)[1] - leaveRange(l)[0])})</b>{l.note ? ` • ${l.note}` : ''}</p>
+                  {recActions('leaves', l, `${staffNm(l)} • ${leaveText(l)}`)}
                 </div>
               ))}
             </div>
@@ -1105,12 +1201,16 @@ function App() {
       {editingAtt && isOwner && (
         <Modal>
           <form onSubmit={saveAtt} className="space-y-3">
-            <h3 className="text-sm font-bold border-b pb-2">In / Out Edit කරන්න</h3>
+            <h3 className="text-sm font-bold border-b pb-2">පැමිණීම Edit කරන්න</h3>
             <p className="text-xs text-slate-600">{staffNm(editingAtt)} • {editingAtt.date}</p>
-            <div className="grid grid-cols-2 gap-3">
-              <div><Lbl t="In" /><input type="time" value={editingAtt.inTime || ''} onChange={e => setEditingAtt({ ...editingAtt, inTime: e.target.value })} className={inp} /></div>
-              <div><Lbl t="Out" /><input type="time" value={editingAtt.outTime || ''} onChange={e => setEditingAtt({ ...editingAtt, outTime: e.target.value })} className={inp} /></div>
-            </div>
+            <select value={isPresent(editingAtt) ? 'present' : 'absent'} onChange={e => setEditingAtt({ ...editingAtt, status: e.target.value })} className={inp}>
+              <option value="present">✅ පැමිණියා</option><option value="absent">❌ නොපැමිණි</option>
+            </select>
+            {isPresent(editingAtt) && (
+              <div className="grid grid-cols-2 gap-3">
+                <div><Lbl t="In" /><input type="time" value={editingAtt.inTime || ''} onChange={e => setEditingAtt({ ...editingAtt, inTime: e.target.value })} className={inp} /></div>
+                <div><Lbl t="Out" /><input type="time" value={editingAtt.outTime || ''} onChange={e => setEditingAtt({ ...editingAtt, outTime: e.target.value })} className={inp} /></div>
+              </div>)}
             <div className="flex gap-2">
               <button type="button" onClick={() => setEditingAtt(null)} className="flex-1 py-2 rounded-xl border border-slate-300 text-xs font-semibold">Cancel</button>
               <button type="submit" className="flex-1 py-2 rounded-xl bg-emerald-700 text-white text-xs font-bold">Save Changes</button>
@@ -1124,10 +1224,11 @@ function App() {
           <form onSubmit={saveLeave} className="space-y-3">
             <h3 className="text-sm font-bold border-b pb-2">නිවාඩුව Edit කරන්න</h3>
             <p className="text-xs text-slate-600">{staffNm(editingLeave)}</p>
-            <div><Lbl t="දිනය" /><input type="date" required value={editingLeave.date} onChange={e => setEditingLeave({ ...editingLeave, date: e.target.value })} className={inp} /></div>
             <div className="grid grid-cols-2 gap-3">
-              <div><Lbl t="සිට" /><input type="time" value={editingLeave.fromTime || ''} onChange={e => setEditingLeave({ ...editingLeave, fromTime: e.target.value })} className={inp} /></div>
-              <div><Lbl t="දක්වා" /><input type="time" value={editingLeave.toTime || ''} onChange={e => setEditingLeave({ ...editingLeave, toTime: e.target.value })} className={inp} /></div>
+              <div><Lbl t="සිට (දිනය)" /><input type="date" required value={editingLeave.fromDate || ''} onChange={e => setEditingLeave({ ...editingLeave, fromDate: e.target.value })} className={inp} /></div>
+              <div><Lbl t="සිට (වේලාව)" /><input type="time" value={editingLeave.fromTime || ''} onChange={e => setEditingLeave({ ...editingLeave, fromTime: e.target.value })} className={inp} /></div>
+              <div><Lbl t="දක්වා (දිනය)" /><input type="date" required value={editingLeave.toDate || ''} onChange={e => setEditingLeave({ ...editingLeave, toDate: e.target.value })} className={inp} /></div>
+              <div><Lbl t="දක්වා (වේලාව)" /><input type="time" value={editingLeave.toTime || ''} onChange={e => setEditingLeave({ ...editingLeave, toTime: e.target.value })} className={inp} /></div>
             </div>
             <div><Lbl t="සටහන" /><input type="text" value={editingLeave.note || ''} onChange={e => setEditingLeave({ ...editingLeave, note: e.target.value })} className={inp} /></div>
             <div className="flex gap-2">
