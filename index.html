@@ -115,6 +115,12 @@ function renderPackageText(b) {
   return `Custom (${d1} ${b.customCheckInTime || '--:--'} → ${b.customCheckOutDate || d1} ${b.customCheckOutTime || '--:--'})`;
 }
 
+const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+const workedMins = (i, o) => { const a = toMin(i), b = toMin(o); return a == null || b == null ? 0 : (b - a + 1440) % 1440; };
+const fmtH = (m) => `${Math.floor(m / 60)}h ${pad(m % 60)}m`;
+const nowTime = () => { const d = new Date(); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+const leaveText = (l) => (l.fromTime || l.toTime) ? `${l.fromTime || '--:--'} → ${l.toTime || '--:--'}` : 'සම්පූර්ණ දවස';
+
 function downloadCSV(name, rows) {
   const csv = '\uFEFF' + rows.map(r => r.map(c => `"${String(c ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
   const a = document.createElement('a');
@@ -252,8 +258,10 @@ const emptyBooking = (roomKey) => ({
 });
 
 function App() {
-  // Role එක localStorage එකේ save කරන්නේ නැහැ (පිටුව refresh කළාම නැවත PIN ඕන)
-  const [role, setRole] = useState('view');
+  // PIN එක එක් වරක් ගැහුවාම phone එකේ මතක තබාගන්නවා (Log out කරන තුරු)
+  const [role, setRole] = useState(() => {
+    try { const h = localStorage.getItem('gs_login_v2'); return h === OWNER_HASH ? 'owner' : h === ADMIN_HASH ? 'admin' : 'view'; } catch (e) { return 'view'; }
+  });
   const isAdmin = role === 'admin' || role === 'owner';
   const isOwner = role === 'owner';
   const [showPin, setShowPin] = useState(false);
@@ -269,6 +277,10 @@ function App() {
   const [bookings, setBookings] = useState(() => { const l = load('gs_bookings_v4', []); return Array.isArray(l) ? l.map(b => ({ ...b, source: normalizeSource(b.source) })) : []; });
   const [deleteRequests, setDeleteRequests] = useState(() => load('gs_delete_requests_v1', []));
   const [expenses, setExpenses] = useState(() => load('gs_expenses_v1', []));
+  const [staff, setStaff] = useState(() => load('gs_staff_v1', []));
+  const [attendance, setAttendance] = useState(() => load('gs_attendance_v1', []));
+  const [leaves, setLeaves] = useState(() => load('gs_leaves_v1', []));
+  const [changeRequests, setChangeRequests] = useState(() => load('gs_change_requests_v1', []));
 
   const roomKeys = Object.keys(roomConfig);
   const defaultRoomKey = roomKeys[0] || 'Double';
@@ -292,6 +304,10 @@ function App() {
   useEffect(() => { localStorage.setItem('gs_bookings_v4', JSON.stringify(bookings)); }, [bookings]);
   useEffect(() => { localStorage.setItem('gs_delete_requests_v1', JSON.stringify(deleteRequests)); }, [deleteRequests]);
   useEffect(() => { localStorage.setItem('gs_expenses_v1', JSON.stringify(expenses)); }, [expenses]);
+  useEffect(() => { localStorage.setItem('gs_staff_v1', JSON.stringify(staff)); }, [staff]);
+  useEffect(() => { localStorage.setItem('gs_attendance_v1', JSON.stringify(attendance)); }, [attendance]);
+  useEffect(() => { localStorage.setItem('gs_leaves_v1', JSON.stringify(leaves)); }, [leaves]);
+  useEffect(() => { localStorage.setItem('gs_change_requests_v1', JSON.stringify(changeRequests)); }, [changeRequests]);
 
   // සියලු Firebase writes/deletes මෙතනින්. ඇත්තටම යැව්වාද (true) නැත්නම් queue එකේ තියෙනවාද (false) කියලා දෙනවා.
   const write = useCallback(async (path, data) => {
@@ -315,20 +331,28 @@ function App() {
       const b = toArray(data?.bookings, 'bookings');
       const e = toArray(data?.expenses, 'expenses');
       const r = toArray(data?.deleteRequests, 'deleteRequests');
+      const st = toArray(data?.staff, 'staff');
+      const at = toArray(data?.attendance, 'attendance');
+      const lv = toArray(data?.leaves, 'leaves');
+      const cr = toArray(data?.changeRequests, 'changeRequests');
       const remoteBookings = b.list.map(x => ({ ...x, source: normalizeSource(x.source) }));
       const remoteRooms = data?.roomConfig && typeof data.roomConfig === 'object' ? data.roomConfig : DEFAULT_ROOM_CONFIG;
 
       // වැරදි key යටතේ තිබූ records (මකද්දී ආපහු එන ඒවා) ස්වයංක්‍රීයව නිවැරදි key එකට මාරු කරනවා
-      const fixes = [...b.fixes, ...e.fixes, ...r.fixes];
+      const fixes = [...b.fixes, ...e.fixes, ...r.fixes, ...st.fixes, ...at.fixes, ...lv.fixes, ...cr.fixes];
       if (fixes.length) { verRef.current++; fixes.forEach(op => queue.push(op)); saveQ(); flush(); }
 
       const same = (a, c) => JSON.stringify(a) === JSON.stringify(c);
       setBookings(p => same(p, remoteBookings) ? p : remoteBookings);
       setExpenses(p => same(p, e.list) ? p : e.list);
       setDeleteRequests(p => same(p, r.list) ? p : r.list);
+      setStaff(p => same(p, st.list) ? p : st.list);
+      setAttendance(p => same(p, at.list) ? p : at.list);
+      setLeaves(p => same(p, lv.list) ? p : lv.list);
+      setChangeRequests(p => same(p, cr.list) ? p : cr.list);
       setRoomConfig(p => same(p, remoteRooms) ? p : remoteRooms);
       setSync('Live');
-      return { remoteBookings, remoteExpenses: e.list, remoteRequests: r.list };
+      return { remoteBookings, remoteExpenses: e.list, remoteRequests: r.list, remoteChange: cr.list };
     } catch (err) { setSync('Offline'); return null; }
   }, []);
 
@@ -343,11 +367,11 @@ function App() {
   }, [pull]);
 
   useEffect(() => {
-    if (!isAdmin && ['add', 'bookings', 'expenses', 'rooms'].includes(tab)) setTab('dashboard');
+    if (!isAdmin && ['add', 'bookings', 'expenses', 'staff', 'rooms'].includes(tab)) setTab('dashboard');
   }, [isAdmin, tab]);
 
   const roleClick = () => {
-    if (role !== 'view') setRole('view');
+    if (role !== 'view') { if (confirm('Log out කරන්නද?')) { localStorage.removeItem('gs_login_v2'); setRole('view'); } }
     else { setPinInput(''); setPinError(''); setShowPin(true); }
   };
   const verifyPin = async (e) => {
@@ -356,8 +380,7 @@ function App() {
     if (Date.now() < f.until) return setPinError('වැරදි උත්සාහ වැඩියි. තත්පර 30කින් නැවත උත්සාහ කරන්න.');
     if (!window.crypto?.subtle) return setPinError('මෙම browser එකේ PIN පරීක්ෂාව වැඩ කරන්නේ නැහැ (https ඕන).');
     const h = await sha256(pinInput.trim());
-    if (h === OWNER_HASH) setRole('owner');
-    else if (h === ADMIN_HASH) setRole('admin');
+    if (h === OWNER_HASH || h === ADMIN_HASH) { setRole(h === OWNER_HASH ? 'owner' : 'admin'); localStorage.setItem('gs_login_v2', h); }
     else {
       f.n++; if (f.n >= 5) { f.until = Date.now() + 30000; f.n = 0; }
       return setPinError('PIN අංකය වැරදියි. නැවත උත්සාහ කරන්න.');
@@ -466,7 +489,7 @@ function App() {
   };
 
   const saveExpense = async (f, isNew) => {
-    if (!isAdmin) return;
+    if (!isAdmin || (!isNew && !isOwner)) return;
     if (!f.title.trim() || f.amount === '') return alert('කරුණාකර වියදම් විස්තරය සහ මුදල ඇතුළත් කරන්න.');
     const latest = await pull();
     const base = latest ? latest.remoteExpenses : expenses;
@@ -474,13 +497,143 @@ function App() {
     setExpenses([ex, ...base.filter(x => String(x.id) !== String(ex.id))]);
     await write(`expenses/${ex.id}`, ex);
     if (isNew) { setExpenseMonth(ex.date.slice(0, 7)); setExpForm({ title: '', amount: '', date: todayISO() }); }
-    else setEditingExpense(null);
+    else { setEditingExpense(null); clearReqs('expenses', ex.id); }
   };
-  const deleteExpense = async (id) => {
-    if (!isAdmin || !confirm('මෙම වියදම ඉවත් කිරීමට අවශ්‍යද?')) return;
-    setExpenses(p => p.filter(x => String(x.id) !== String(id)));
-    await write(`expenses/${id}`, null);
+  // ---------- Staff / Attendance / Leave / Change requests ----------
+  const [attDate, setAttDate] = useState(todayISO());
+  const [staffMonth, setStaffMonth] = useState(currentMonthISO());
+  const [newStaff, setNewStaff] = useState('');
+  const [leaveForm, setLeaveForm] = useState({ staffId: '', date: todayISO(), fromTime: '', toTime: '', note: '' });
+  const [editingAtt, setEditingAtt] = useState(null);
+  const [editingLeave, setEditingLeave] = useState(null);
+  const [reqTarget, setReqTarget] = useState(null);
+  const [reqReason, setReqReason] = useState('');
+  const [markTimes, setMarkTimes] = useState({});
+
+  const staffNm = (r) => staff.find(x => String(x.id) === String(r.staffId))?.name || r.staffName || '?';
+  const hasReq = (col, id) => changeRequests.some(r => r.col === col && String(r.recId) === String(id));
+  const clearReqs = async (col, id) => {
+    const m = changeRequests.filter(r => r.col === col && String(r.recId) === String(id));
+    if (!m.length) return;
+    setChangeRequests(p => p.filter(r => !m.includes(r)));
+    for (const r of m) await write(`changeRequests/${r.id}`, null);
   };
+  const rejectChangeReq = async (id) => {
+    if (!isOwner) return;
+    setChangeRequests(p => p.filter(r => r.id !== id));
+    await write(`changeRequests/${id}`, null);
+  };
+  const ownerDeleteRec = async (col, id, ask = true) => {
+    if (!isOwner || (ask && !confirm('මෙය ඉවත් කිරීමට අවශ්‍යද?'))) return;
+    ({ expenses: setExpenses, attendance: setAttendance, leaves: setLeaves })[col](p => p.filter(x => String(x.id) !== String(id)));
+    await write(`${col}/${id}`, null);
+    await clearReqs(col, id);
+  };
+  const startEdit = (col, rec) => col === 'expenses' ? setEditingExpense({ ...rec }) : col === 'attendance' ? setEditingAtt({ ...rec }) : setEditingLeave({ ...rec });
+  const openFromReq = (req) => {
+    const rec = ({ expenses, attendance, leaves })[req.col].find(x => String(x.id) === String(req.recId));
+    if (!rec) { alert('මෙම සටහන දැන් නැහැ.'); return rejectChangeReq(req.id); }
+    startEdit(req.col, rec);
+  };
+  const submitChangeReq = async (e) => {
+    e.preventDefault();
+    if (!isAdmin || !reqTarget) return;
+    const { kind, col, rec, label } = reqTarget;
+    if (hasReq(col, rec.id)) { alert('මෙම සටහන සඳහා Request එකක් දැනටමත් යවා ඇත.'); return setReqTarget(null); }
+    const req = { id: Date.now(), kind, col, recId: rec.id, label, reason: reqReason.trim() || 'හේතුවක් සඳහන් කර නැත', requestedAt: new Date().toLocaleString('si-LK') };
+    setChangeRequests(p => [req, ...p]); setReqTarget(null);
+    await write(`changeRequests/${req.id}`, req);
+    alert('Request එක Owner වෙත යවන ලදී.');
+  };
+  // Owner ට Edit/Delete; Admin ට Request බොත්තම්
+  const recActions = (col, rec, label) => {
+    if (isOwner) return (
+      <div className="flex gap-2 justify-end">
+        <button type="button" onClick={() => startEdit(col, rec)} className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700"><i className="fa-solid fa-pen"></i> Edit</button>
+        <button type="button" onClick={() => ownerDeleteRec(col, rec.id)} className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200"><i className="fa-solid fa-trash"></i></button>
+      </div>);
+    if (hasReq(col, rec.id)) return <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded inline-block font-semibold">Request Pending</p>;
+    return (
+      <div className="flex gap-2 justify-end">
+        <button type="button" onClick={() => { setReqTarget({ kind: 'edit', col, rec, label }); setReqReason(''); }} className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-300">Request Edit</button>
+        <button type="button" onClick={() => { setReqTarget({ kind: 'delete', col, rec, label }); setReqReason(''); }} className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-300">Request Delete</button>
+      </div>);
+  };
+
+  const addStaff = async (e) => {
+    e.preventDefault();
+    const name = newStaff.trim();
+    if (!isAdmin || !name) return;
+    if (staff.some(x => x.name.toLowerCase() === name.toLowerCase())) return alert('මෙම නම දැනටමත් ඇත.');
+    const st = { id: Date.now(), name };
+    setStaff(p => [...p, st]); setNewStaff('');
+    await write(`staff/${st.id}`, st);
+  };
+  const renameStaff = async (st) => {
+    if (!isOwner) return;
+    const n = (prompt('අලුත් නම', st.name) || '').trim();
+    if (!n || n === st.name) return;
+    const u = { ...st, name: n };
+    setStaff(p => p.map(x => x.id === st.id ? u : x));
+    await write(`staff/${st.id}`, u);
+  };
+  const removeStaff = async (st) => {
+    if (!isOwner || !confirm(`${st.name} ඉවත් කරන්නද? (පැරණි වාර්තා මැකෙන්නේ නැහැ)`)) return;
+    setStaff(p => p.filter(x => x.id !== st.id));
+    await write(`staff/${st.id}`, null);
+  };
+  // Admin ට හිස් In / Out එක පමණක් පුරවන්න පුළුවන්. දැනටමත් ඇති වේලාවක් වෙනස් කරන්න Owner ට පමණි.
+  const markAtt = async (st, date, field, time) => {
+    if (!isAdmin || !time) return;
+    const id = `a_${st.id}_${date}`;
+    const cur = attendance.find(a => a.id === id);
+    if (cur && cur[field]) return alert('මෙය දැනටමත් සටහන් කර ඇත. වෙනස් කිරීමට Owner ට Request කරන්න.');
+    const rec = { ...(cur || { id, staffId: st.id, staffName: st.name, date, inTime: '', outTime: '' }), [field]: time };
+    setAttendance(p => [rec, ...p.filter(a => a.id !== id)]);
+    await write(`attendance/${id}`, rec);
+  };
+  const saveAtt = async (e) => {
+    e.preventDefault();
+    if (!isOwner) return;
+    const rec = { ...editingAtt, inTime: editingAtt.inTime || '', outTime: editingAtt.outTime || '' };
+    setAttendance(p => p.map(a => a.id === rec.id ? rec : a)); setEditingAtt(null);
+    await write(`attendance/${rec.id}`, rec);
+    await clearReqs('attendance', rec.id);
+  };
+  const addLeave = async (e) => {
+    e.preventDefault();
+    if (!isAdmin) return;
+    const st = staff.find(x => String(x.id) === String(leaveForm.staffId));
+    if (!st) return alert('Staff කෙනෙක් තෝරන්න.');
+    const lv = { id: Date.now(), staffId: st.id, staffName: st.name, date: leaveForm.date, fromTime: leaveForm.fromTime, toTime: leaveForm.toTime, note: leaveForm.note.trim() };
+    setLeaves(p => [lv, ...p]); setStaffMonth(lv.date.slice(0, 7));
+    setLeaveForm({ ...leaveForm, fromTime: '', toTime: '', note: '' });
+    await write(`leaves/${lv.id}`, lv);
+  };
+  const saveLeave = async (e) => {
+    e.preventDefault();
+    if (!isOwner) return;
+    const lv = { ...editingLeave };
+    setLeaves(p => p.map(x => x.id === lv.id ? lv : x)); setEditingLeave(null);
+    await write(`leaves/${lv.id}`, lv);
+    await clearReqs('leaves', lv.id);
+  };
+
+  const dayRows = staff.map(x => ({
+    st: x, rec: attendance.find(a => a.id === `a_${x.id}_${attDate}`),
+    lv: leaves.filter(l => l.date === attDate && String(l.staffId) === String(x.id))
+  }));
+  const attMonth = attendance.filter(a => a.date && a.date.startsWith(staffMonth)).sort((a, b) => a.date.localeCompare(b.date));
+  const leaveMonth = leaves.filter(l => l.date && l.date.startsWith(staffMonth)).sort((a, b) => a.date.localeCompare(b.date));
+  const staffSummary = staff.map(x => {
+    const A = attMonth.filter(a => String(a.staffId) === String(x.id));
+    return { st: x, A, L: leaveMonth.filter(l => String(l.staffId) === String(x.id)), mins: A.reduce((t, a) => t + workedMins(a.inTime, a.outTime), 0) };
+  });
+  const exportStaff = () => downloadCSV(`staff-${staffMonth}.csv`, [
+    ['Type', 'Staff', 'Date', 'In / From', 'Out / To', 'Hours / Note'],
+    ...attMonth.map(a => ['Attendance', staffNm(a), a.date, a.inTime, a.outTime, a.inTime && a.outTime ? fmtH(workedMins(a.inTime, a.outTime)) : '']),
+    ...leaveMonth.map(l => ['Leave', staffNm(l), l.date, l.fromTime, l.toTime, l.note])
+  ]);
 
   // ---------- derived ----------
   const today = todayISO();
@@ -529,7 +682,7 @@ function App() {
     ...monthlyBookings.map(b => [b.date, b.guest, formatBookingRoomsText(b), renderPackageText(b), normalizeSource(b.source), b.price, b.advance || 0, Math.max(0, (b.price || 0) - (b.advance || 0)), b.status, b.notes])
   ]);
   const exportExpenses = () => downloadCSV(`expenses-${expenseMonth}.csv`, [['Date', 'Title', 'Amount'], ...monthlyExpenses.map(x => [x.date, x.title, x.amount])]);
-  const fullBackup = () => downloadJSON(`green-stay-backup-${today}.json`, { bookings, expenses, deleteRequests, roomConfig });
+  const fullBackup = () => downloadJSON(`green-stay-backup-${today}.json`, { bookings, expenses, deleteRequests, roomConfig, staff, attendance, leaves, changeRequests });
 
   const renderBookingCard = (b) => {
     const decided = b.status === 'arrived' || b.status === 'not_arrived';
@@ -576,7 +729,7 @@ function App() {
 
   const roleStyle = role === 'owner' ? 'bg-amber-400 text-slate-900 border-amber-300' : role === 'admin' ? 'bg-sky-300 text-slate-900 border-sky-200' : 'bg-emerald-800 text-emerald-200 border-emerald-600';
   const navItems = [['dashboard', 'fa-house', 'Home'], ['calendar', 'fa-calendar-days', 'Calendar'],
-    ...(isAdmin ? [['add', 'fa-circle-plus', 'Add'], ['bookings', 'fa-list-check', 'Bookings'], ['expenses', 'fa-receipt', 'Expenses'], ['rooms', 'fa-bed', 'Rooms']] : [])];
+    ...(isAdmin ? [['add', 'fa-circle-plus', 'Add'], ['bookings', 'fa-list-check', 'Bookings'], ['expenses', 'fa-receipt', 'Expenses'], ['staff', 'fa-user-clock', 'Staff'], ['rooms', 'fa-bed', 'Rooms']] : [])];
   const card = 'bg-white p-4 rounded-xl border border-slate-200 shadow-sm';
 
   return (
@@ -584,7 +737,7 @@ function App() {
       <header className="bg-emerald-700 text-white p-4 sticky top-0 z-10 flex justify-between items-center shadow-md">
         <div>
           <h1 className="text-lg font-bold">Green Stay Negombo</h1>
-          <p className="text-xs text-emerald-100">කාමර වෙන්කිරීම් කළමනාකරු • {sync}{isOwner && deleteRequests.length > 0 ? ` • Requests (${deleteRequests.length})` : ''}</p>
+          <p className="text-xs text-emerald-100">කාමර වෙන්කිරීම් කළමනාකරු • {sync}{isOwner && deleteRequests.length + changeRequests.length > 0 ? ` • Requests (${deleteRequests.length + changeRequests.length})` : ''}</p>
         </div>
         <div className="flex items-center gap-1.5">
           <button type="button" onClick={() => pull()} className="text-xs px-2.5 py-1.5 rounded-full bg-emerald-800 text-emerald-100 border border-emerald-600"><i className="fa-solid fa-rotate"></i></button>
@@ -597,6 +750,25 @@ function App() {
       <main className="p-4">
         {tab === 'dashboard' && (
           <div className="space-y-4">
+            {isOwner && changeRequests.length > 0 && (
+              <div className="bg-amber-50 border border-amber-300 rounded-xl p-3.5 space-y-2.5">
+                <h2 className="text-xs font-bold text-amber-900 uppercase">Edit / Delete Requests ({changeRequests.length})</h2>
+                {changeRequests.map(req => (
+                  <div key={req.id} className="bg-white p-3 rounded-lg border border-amber-200 space-y-1.5">
+                    <p className="text-sm font-bold">{req.kind === 'delete' ? 'Delete Request' : 'Edit Request'}</p>
+                    <p className="text-xs text-slate-600">{req.label}</p>
+                    <p className="text-xs text-slate-600">හේතුව: <span className="font-semibold">{req.reason}</span></p>
+                    <p className="text-[11px] text-slate-400">{req.requestedAt}</p>
+                    <div className="flex gap-2 pt-1.5 border-t border-slate-100">
+                      {req.kind === 'delete'
+                        ? <button type="button" onClick={() => ownerDeleteRec(req.col, req.recId, false)} className="flex-1 py-1.5 rounded-lg text-xs font-bold bg-rose-600 text-white">Approve Delete</button>
+                        : <button type="button" onClick={() => openFromReq(req)} className="flex-1 py-1.5 rounded-lg text-xs font-bold bg-emerald-700 text-white">Edit කරන්න</button>}
+                      <button type="button" onClick={() => rejectChangeReq(req.id)} className="flex-1 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700">Reject</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
             {isOwner && deleteRequests.length > 0 && (
               <div className="bg-amber-50 border border-amber-300 rounded-xl p-3.5 space-y-2.5">
                 <h2 className="text-xs font-bold text-amber-900 uppercase">Delete Requests ({deleteRequests.length})</h2>
@@ -741,13 +913,98 @@ function App() {
             </div>
             <div className="space-y-2">
               {monthlyExpenses.length === 0 ? <div className="bg-white p-6 rounded-xl border text-center text-xs text-slate-500">මෙම මාසය සඳහා වියදම් නොමැත.</div> : monthlyExpenses.map(ex => (
-                <div key={ex.id} className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex justify-between items-center">
-                  <div><p className="text-sm font-bold">{ex.title}</p><p className="text-xs text-slate-500">{ex.date}</p></div>
-                  <div className="flex items-center gap-2">
+                <div key={ex.id} className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm space-y-2">
+                  <div className="flex justify-between items-center">
+                    <div><p className="text-sm font-bold">{ex.title}</p><p className="text-xs text-slate-500">{ex.date}</p></div>
                     <span className="text-sm font-bold text-rose-700">Rs. {Number(ex.amount).toLocaleString()}</span>
-                    <button type="button" onClick={() => setEditingExpense({ ...ex })} className="px-2 py-1 rounded-lg text-xs font-semibold bg-slate-100"><i className="fa-solid fa-pen"></i></button>
-                    <button type="button" onClick={() => deleteExpense(ex.id)} className="text-slate-400 hover:text-rose-600 px-1.5 text-xs"><i className="fa-solid fa-trash"></i></button>
                   </div>
+                  {recActions('expenses', ex, `වියදම: ${ex.title} • Rs. ${ex.amount} • ${ex.date}`)}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {tab === 'staff' && isAdmin && (
+          <div className="space-y-4">
+            <form onSubmit={addStaff} className={card + ' flex gap-2 items-end'}>
+              <div className="flex-1"><Lbl t="අලුත් Staff නමක්" /><input type="text" required placeholder="නම" value={newStaff} onChange={e => setNewStaff(e.target.value)} className={inp} /></div>
+              <button type="submit" className="bg-emerald-700 text-white font-bold px-4 py-2.5 rounded-lg text-sm">Add</button>
+            </form>
+
+            <div className={card + ' space-y-3'}>
+              <div className="flex items-center justify-between gap-2 border-b pb-2">
+                <h2 className="text-sm font-bold">දෛනික In / Out</h2>
+                <input type="date" value={attDate} onChange={e => setAttDate(e.target.value)} className="text-xs font-bold border border-slate-300 rounded-lg px-2 py-1.5" />
+              </div>
+              {staff.length === 0 && <p className="text-xs text-slate-500 text-center py-3">මුලින් Staff නම් Add කරන්න.</p>}
+              {dayRows.map(({ st, rec, lv }) => (
+                <div key={st.id} className="border border-slate-200 rounded-xl p-2.5 space-y-2">
+                  <div className="flex justify-between items-center">
+                    <p className="text-sm font-bold">{st.name}</p>
+                    {isOwner && <span className="flex gap-3 text-xs text-slate-500">
+                      <button type="button" onClick={() => renameStaff(st)}><i className="fa-solid fa-pen"></i></button>
+                      <button type="button" onClick={() => removeStaff(st)}><i className="fa-solid fa-trash"></i></button>
+                    </span>}
+                  </div>
+                  {lv.map(l => <p key={l.id} className="text-[11px] bg-amber-50 text-amber-800 border border-amber-200 rounded px-2 py-0.5">නිවාඩු: {leaveText(l)}{l.note ? ` • ${l.note}` : ''}</p>)}
+                  <div className="grid grid-cols-2 gap-2">
+                    {[['inTime', 'In'], ['outTime', 'Out']].map(([field, label]) => (
+                      <div key={field} className="bg-slate-50 rounded-lg p-2">
+                        <p className="text-xs font-semibold text-slate-600 mb-1">{label}</p>
+                        {rec && rec[field] ? <p className="text-base font-bold text-emerald-700">{rec[field]}</p> : (
+                          <div className="flex gap-1">
+                            <input type="time" value={markTimes[st.id + field] ?? nowTime()} onChange={e => setMarkTimes({ ...markTimes, [st.id + field]: e.target.value })} className={inp + ' !p-1 min-w-0'} />
+                            <button type="button" onClick={() => markAtt(st, attDate, field, markTimes[st.id + field] ?? nowTime())} className="bg-emerald-700 text-white px-2.5 rounded-lg text-xs font-bold">✓</button>
+                          </div>)}
+                      </div>
+                    ))}
+                  </div>
+                  {rec && (rec.inTime || rec.outTime) && recActions('attendance', rec, `${st.name} • ${attDate} • In ${rec.inTime || '--'} / Out ${rec.outTime || '--'}`)}
+                </div>
+              ))}
+            </div>
+
+            <form onSubmit={addLeave} className={card + ' space-y-3'}>
+              <h2 className="text-sm font-bold border-b pb-2">නිවාඩු සටහන් කරන්න</h2>
+              <div><Lbl t="Staff" /><select required value={leaveForm.staffId} onChange={e => setLeaveForm({ ...leaveForm, staffId: e.target.value })} className={inp}>
+                <option value="">තෝරන්න</option>{staff.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</select></div>
+              <div><Lbl t="දිනය" /><input type="date" required value={leaveForm.date} onChange={e => setLeaveForm({ ...leaveForm, date: e.target.value })} className={inp} /></div>
+              <div className="grid grid-cols-2 gap-3">
+                <div><Lbl t="සිට (වේලාව)" /><input type="time" value={leaveForm.fromTime} onChange={e => setLeaveForm({ ...leaveForm, fromTime: e.target.value })} className={inp} /></div>
+                <div><Lbl t="දක්වා (වේලාව)" /><input type="time" value={leaveForm.toTime} onChange={e => setLeaveForm({ ...leaveForm, toTime: e.target.value })} className={inp} /></div>
+              </div>
+              <p className="text-[11px] text-slate-500">වේලාව හිස්නම් සම්පූර්ණ දවසම නිවාඩුවක් ලෙස සටහන් වේ.</p>
+              <div><Lbl t="හේතුව / සටහන" /><input type="text" value={leaveForm.note} onChange={e => setLeaveForm({ ...leaveForm, note: e.target.value })} className={inp} /></div>
+              <button type="submit" className="w-full bg-amber-500 text-slate-900 font-bold py-2.5 rounded-xl text-sm">නිවාඩුව Save කරන්න</button>
+            </form>
+
+            <div className={card + ' space-y-3'}>
+              <div className="flex items-center justify-between gap-2 border-b pb-2">
+                <h2 className="text-sm font-bold">මාසික වාර්තාව</h2>
+                <input type="month" value={staffMonth} onChange={e => setStaffMonth(e.target.value)} className="text-xs font-bold border border-slate-300 rounded-lg px-2 py-1.5" />
+                <button type="button" onClick={exportStaff} className="text-xs font-bold bg-emerald-700 text-white px-3 py-1.5 rounded-lg"><i className="fa-solid fa-file-csv"></i></button>
+              </div>
+              {staffSummary.map(({ st, A, L, mins }) => (
+                <div key={st.id} className="border border-slate-200 rounded-xl p-2.5">
+                  <div className="flex justify-between items-center mb-1">
+                    <p className="text-sm font-bold">{st.name}</p>
+                    <p className="text-[11px] text-slate-600">දින {A.length} • {fmtH(mins)} • නිවාඩු {L.length}</p>
+                  </div>
+                  {A.map(a => (
+                    <div key={a.id} className="flex justify-between text-xs border-t border-slate-100 py-1">
+                      <span>{a.date}</span><span>{a.inTime || '--:--'} → {a.outTime || '--:--'}</span>
+                      <span className="font-semibold">{a.inTime && a.outTime ? fmtH(workedMins(a.inTime, a.outTime)) : '-'}</span>
+                    </div>
+                  ))}
+                </div>
+              ))}
+              <h3 className="text-xs font-bold text-slate-500 uppercase pt-1">{formatMonthLabel(staffMonth)} නිවාඩු</h3>
+              {leaveMonth.length === 0 ? <p className="text-xs text-slate-500 text-center py-2">නිවාඩු නැහැ.</p> : leaveMonth.map(l => (
+                <div key={l.id} className="bg-amber-50/50 border border-amber-200 rounded-xl p-2.5 space-y-1.5">
+                  <p className="text-sm font-bold">{staffNm(l)} <span className="text-xs font-normal text-slate-500">• {l.date}</span></p>
+                  <p className="text-xs text-slate-600">{leaveText(l)}{l.note ? ` • ${l.note}` : ''}</p>
+                  {recActions('leaves', l, `${staffNm(l)} • ${l.date} නිවාඩු (${leaveText(l)})`)}
                 </div>
               ))}
             </div>
@@ -831,9 +1088,59 @@ function App() {
         </Modal>
       )}
 
+      {reqTarget && role === 'admin' && (
+        <Modal>
+          <form onSubmit={submitChangeReq} className="space-y-3">
+            <h3 className="text-sm font-bold border-b pb-2">Owner වෙත {reqTarget.kind === 'delete' ? 'Delete' : 'Edit'} Request යවන්න</h3>
+            <p className="text-xs text-slate-600">{reqTarget.label}</p>
+            <div><Lbl t={reqTarget.kind === 'delete' ? 'Delete කිරීමට හේතුව' : 'වෙනස් කළ යුතු දේ (උදා: මුදල 3500 විය යුතුයි)'} /><textarea rows="2" value={reqReason} onChange={e => setReqReason(e.target.value)} className={inp}></textarea></div>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setReqTarget(null)} className="flex-1 py-2 rounded-xl border border-slate-300 text-xs font-semibold">Cancel</button>
+              <button type="submit" className="flex-1 py-2 rounded-xl bg-amber-500 text-slate-900 text-xs font-bold">Request යවන්න</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {editingAtt && isOwner && (
+        <Modal>
+          <form onSubmit={saveAtt} className="space-y-3">
+            <h3 className="text-sm font-bold border-b pb-2">In / Out Edit කරන්න</h3>
+            <p className="text-xs text-slate-600">{staffNm(editingAtt)} • {editingAtt.date}</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div><Lbl t="In" /><input type="time" value={editingAtt.inTime || ''} onChange={e => setEditingAtt({ ...editingAtt, inTime: e.target.value })} className={inp} /></div>
+              <div><Lbl t="Out" /><input type="time" value={editingAtt.outTime || ''} onChange={e => setEditingAtt({ ...editingAtt, outTime: e.target.value })} className={inp} /></div>
+            </div>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setEditingAtt(null)} className="flex-1 py-2 rounded-xl border border-slate-300 text-xs font-semibold">Cancel</button>
+              <button type="submit" className="flex-1 py-2 rounded-xl bg-emerald-700 text-white text-xs font-bold">Save Changes</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {editingLeave && isOwner && (
+        <Modal>
+          <form onSubmit={saveLeave} className="space-y-3">
+            <h3 className="text-sm font-bold border-b pb-2">නිවාඩුව Edit කරන්න</h3>
+            <p className="text-xs text-slate-600">{staffNm(editingLeave)}</p>
+            <div><Lbl t="දිනය" /><input type="date" required value={editingLeave.date} onChange={e => setEditingLeave({ ...editingLeave, date: e.target.value })} className={inp} /></div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><Lbl t="සිට" /><input type="time" value={editingLeave.fromTime || ''} onChange={e => setEditingLeave({ ...editingLeave, fromTime: e.target.value })} className={inp} /></div>
+              <div><Lbl t="දක්වා" /><input type="time" value={editingLeave.toTime || ''} onChange={e => setEditingLeave({ ...editingLeave, toTime: e.target.value })} className={inp} /></div>
+            </div>
+            <div><Lbl t="සටහන" /><input type="text" value={editingLeave.note || ''} onChange={e => setEditingLeave({ ...editingLeave, note: e.target.value })} className={inp} /></div>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setEditingLeave(null)} className="flex-1 py-2 rounded-xl border border-slate-300 text-xs font-semibold">Cancel</button>
+              <button type="submit" className="flex-1 py-2 rounded-xl bg-emerald-700 text-white text-xs font-bold">Save Changes</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
       <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t border-slate-200 flex justify-around py-2 z-20 shadow-lg">
         {navItems.map(([id, icon, label]) => (
-          <button key={id} onClick={() => setTab(id)} className={`flex flex-col items-center text-[11px] px-2 py-1 ${tab === id ? 'text-emerald-700 font-bold' : 'text-slate-500'}`}>
+          <button key={id} onClick={() => setTab(id)} className={`flex flex-col items-center text-[11px] px-1 py-1 ${tab === id ? 'text-emerald-700 font-bold' : 'text-slate-500'}`}>
             <i className={`fa-solid ${icon} text-base mb-0.5`}></i><span>{label}</span>
           </button>
         ))}
