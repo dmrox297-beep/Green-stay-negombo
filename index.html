@@ -860,12 +860,14 @@ const availability = Object.entries(roomConfig).map(([key, info]) => ({
 key, label: info.label, soft: info.soft,
 available: Math.max(0, (Number(info.total) || 0) - peak(selBookings, key, dayRange(selDate)))
 }));
-const pkgAvailability = [['Day Out', 'Day Out', 'bg-emerald-50 text-emerald-800 border-emerald-200'], ['Night Out', 'Night Out', 'bg-indigo-50 text-indigo-800 border-indigo-200'], ['1 Night Standard', 'Standard', 'bg-amber-50 text-amber-800 border-amber-200']].map(([id, label, soft]) => {
+const computePkgAvail = (iso) => [['Day Out', 'Day Out', 'bg-emerald-50 text-emerald-800 border-emerald-200'], ['Night Out', 'Night Out', 'bg-indigo-50 text-indigo-800 border-indigo-200'], ['1 Night Standard', 'Standard', 'bg-amber-50 text-amber-800 border-amber-200']].map(([id, label, soft]) => {
 const [ft, tt, nx] = PKG_TIMES[id];
-const win = [ts(selDate, ft), ts(selDate, tt, nx)];
+const win = [ts(iso, ft), ts(iso, tt, nx)];
 const perType = Object.entries(roomConfig).map(([key, info]) => ({ key, label: info.label, left: Math.max(0, (Number(info.total) || 0) - peak(bookings, key, win)) }));
 return { id, label, soft, total: perType.reduce((s, x) => s + x.left, 0), perType };
 });
+const pkgAvailability = computePkgAvail(selDate);
+const todayPkgAvail = computePkgAvail(today);
 const monthlyBookings = useMemo(() => bookings.filter(b => b.date && b.date.startsWith(bookingMonth)).sort((a, b) => a.date.localeCompare(b.date)), [bookings, bookingMonth]);
 const sum = (l, f) => l.reduce((s, b) => s + (Number(f(b)) || 0), 0);
 const stats = useMemo(() => {
@@ -1000,6 +1002,17 @@ return (
 <div className="grid grid-cols-2 gap-3">
 <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-xl text-center"><i className="fa-solid fa-sun text-emerald-600 text-xl mb-1"></i><p className="text-xs text-slate-600">අද Day Out</p><p className="text-2xl font-bold mt-1">{todayDayOut} / {totalRooms}</p></div>
 <div className="bg-indigo-50 border border-indigo-200 p-4 rounded-xl text-center"><i className="fa-solid fa-moon text-indigo-600 text-xl mb-1"></i><p className="text-xs text-slate-600">අද Night / Stay</p><p className="text-2xl font-bold mt-1">{todayNight} / {totalRooms}</p></div>
+</div>
+<div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm">
+<h2 className="text-xs font-bold text-slate-600 uppercase mb-2">අද ඉතිරි Rooms (Package අනුව)</h2>
+<div className="space-y-2">
+{todayPkgAvail.map(p => (
+<div key={p.id} className={`p-2.5 rounded-lg border text-xs ${p.total > 0 ? p.soft : 'bg-rose-50 text-rose-700 border-rose-200'}`}>
+<div className="flex justify-between items-center mb-1.5"><span className="font-bold text-sm">{p.label}</span><span className="font-bold text-sm">{p.total > 0 ? `${p.total} ඉතිරි` : 'නැත'}</span></div>
+<div className="grid grid-cols-2 gap-1">{p.perType.map(t => <div key={t.key} className="flex justify-between bg-white/70 rounded px-2 py-1"><span>{t.label}</span><b>{t.left}</b></div>)}</div>
+</div>
+))}
+</div>
 </div>
 <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
 <h2 className="text-xs font-bold text-slate-500 uppercase mb-2">කාමර ධාරිතාව (අද උපරිම)</h2>
